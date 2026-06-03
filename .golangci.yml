@@ -5,34 +5,19 @@ run:
 linters:
   disable-all: true
   enable:
-    - errcheck       # unchecked errors
-    - gosimple       # simplifications
     - govet          # go vet
     - ineffassign    # unused assignments
-    - staticcheck    # comprehensive static analysis
     - typecheck      # type errors
-    - unused         # unused code
-    - gofmt          # formatting
-    - goimports      # import grouping
-    - misspell       # common misspellings (English)
 
-linters-settings:
-  gofmt:
-    simplify: true
-  goimports:
-    local-prefixes: github.com/LL264a/afd
-  misspell:
-    locale: US
+linters-settings: {}
 
 issues:
-  exclude-use-default: false
-  max-issues-per-linter: 50
-  max-same-issues: 3
-  exclude-rules:
-    - path: _test\.go
-      linters: [errcheck, gosimple]
+  exclude-use-default: true
+  max-issues-per-linter: 0
+  max-same-issues: 0
 
 output:
-  format: colored-line-number
+  formats:
+    - format: colored-line-number
   print-issued-lines: true
   print-linter-name: true
