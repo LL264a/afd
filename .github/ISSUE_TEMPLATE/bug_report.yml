@@ -1,0 +1,111 @@
+name: Bug Report
+description: Report something that is broken or behaves incorrectly.
+title: "[bug] "
+labels: ["bug", "triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please fill out the template so we can
+        reproduce and fix it. **Do not** include secrets, tokens, or
+        private URLs — sanitise any example URLs to `https://example.com`.
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How broken is it?
+      options:
+        - S0 - Data loss, security issue, or crash
+        - S1 - Core feature unusable
+        - S2 - Feature degraded but workaround exists
+        - S3 - Cosmetic / minor
+      validations:
+        required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: NexusDL version
+      description: Output of `nexus-dl version`.
+      placeholder: "v0.1.0 (commit abcdef, built 2026-06-02T00:00:00Z)"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS & architecture
+      placeholder: "Ubuntu 24.04 amd64"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: Protocol
+      options:
+        - http/https
+        - ftp/ftps
+        - s3
+        - webdav
+        - sftp
+        - bittorrent
+        - metalink
+        - rpc (json-rpc / xml-rpc)
+        - cluster / gRPC
+        - web UI
+        - other
+      validations:
+        required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ./nexus-dl serve
+        2. curl -X POST http://localhost:8080/api/tasks -d '{...}'
+        3. observe ...
+      validations:
+        required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      validations:
+        required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      validations:
+        required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Set `log_level: debug` in `config.yaml` and paste the relevant lines.
+      render: shell
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant config (redact secrets)
+      render: yaml
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues and this is not a duplicate
+          required: true
+        - label: I have reproduced this on the latest release
+          required: true
+        - label: I have not included any private tokens or URLs
+          required: true
