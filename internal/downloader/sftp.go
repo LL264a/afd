@@ -1,4 +1,4 @@
-﻿package downloader
+package downloader
 
 import (
 	"context"
@@ -21,17 +21,17 @@ import (
 )
 
 type SFTPDownloader struct {
-	url          string
-	outputPath   string
-	client       *sftp.Client
-	sshClient    *ssh.Client
-	logger       *zap.SugaredLogger
-	downloaded   int64
-	speed        int64
+	url           string
+	outputPath    string
+	client        *sftp.Client
+	sshClient     *ssh.Client
+	logger        *zap.SugaredLogger
+	downloaded    int64
+	speed         int64
 	activeThreads int32
-	rateLimit    int64
-	retryConfig  RetryConfig
-	config       *SFTPConfig
+	rateLimit     int64
+	retryConfig   RetryConfig
+	config        *SFTPConfig
 }
 
 type SFTPConfig struct {
@@ -82,10 +82,10 @@ func NewSFTPDownloader(url, outputPath string, cfg *SFTPConfig) *SFTPDownloader 
 		cfg = &SFTPConfig{}
 	}
 	return &SFTPDownloader{
-		url:          url,
-		outputPath:   outputPath,
-		logger:       logger.Log.Named("sftp-downloader"),
-		config:       cfg,
+		url:        url,
+		outputPath: outputPath,
+		logger:     logger.Log.Named("sftp-downloader"),
+		config:     cfg,
 	}
 }
 
@@ -185,22 +185,22 @@ func (d *SFTPDownloader) getHostKeyCallback() (ssh.HostKeyCallback, error) {
 	return knownhosts.New(knownHosts)
 }
 
-func (d *SFTPDownloader) SetURL(url string) { d.url = url }
-func (d *SFTPDownloader) SetOutputPath(path string) { d.outputPath = path }
-func (d *SFTPDownloader) SetControlFilePath(path string) {}
-func (d *SFTPDownloader) SetControlFile(cf interface{}) {}
-func (d *SFTPDownloader) URL() string { return d.url }
-func (d *SFTPDownloader) OutputPath() string { return d.outputPath }
-func (d *SFTPDownloader) Speed() int64 { return atomic.LoadInt64(&d.speed) }
-func (d *SFTPDownloader) Progress() float64 { return 0 }
-func (d *SFTPDownloader) TotalDownloaded() int64 { return atomic.LoadInt64(&d.downloaded) }
-func (d *SFTPDownloader) ActiveThreads() int32 { return atomic.LoadInt32(&d.activeThreads) }
-func (d *SFTPDownloader) SetRateLimit(rate int64) { atomic.StoreInt64(&d.rateLimit, rate) }
-func (d *SFTPDownloader) GetRateLimit() int64 { return atomic.LoadInt64(&d.rateLimit) }
-func (d *SFTPDownloader) SetRetryConfig(config RetryConfig) { d.retryConfig = config }
-func (d *SFTPDownloader) GetRetryConfig() RetryConfig { return d.retryConfig }
+func (d *SFTPDownloader) SetURL(url string)                      { d.url = url }
+func (d *SFTPDownloader) SetOutputPath(path string)              { d.outputPath = path }
+func (d *SFTPDownloader) SetControlFilePath(path string)         {}
+func (d *SFTPDownloader) SetControlFile(cf interface{})          {}
+func (d *SFTPDownloader) URL() string                            { return d.url }
+func (d *SFTPDownloader) OutputPath() string                     { return d.outputPath }
+func (d *SFTPDownloader) Speed() int64                           { return atomic.LoadInt64(&d.speed) }
+func (d *SFTPDownloader) Progress() float64                      { return 0 }
+func (d *SFTPDownloader) TotalDownloaded() int64                 { return atomic.LoadInt64(&d.downloaded) }
+func (d *SFTPDownloader) ActiveThreads() int32                   { return atomic.LoadInt32(&d.activeThreads) }
+func (d *SFTPDownloader) SetRateLimit(rate int64)                { atomic.StoreInt64(&d.rateLimit, rate) }
+func (d *SFTPDownloader) GetRateLimit() int64                    { return atomic.LoadInt64(&d.rateLimit) }
+func (d *SFTPDownloader) SetRetryConfig(config RetryConfig)      { d.retryConfig = config }
+func (d *SFTPDownloader) GetRetryConfig() RetryConfig            { return d.retryConfig }
 func (d *SFTPDownloader) LoadProgress(ctx context.Context) error { return nil }
-func (d *SFTPDownloader) SaveProgress() error { return nil }
+func (d *SFTPDownloader) SaveProgress() error                    { return nil }
 
 func (d *SFTPDownloader) Download(ctx context.Context) error {
 	if err := d.connect(); err != nil {
@@ -296,4 +296,3 @@ func (h *SFTPProtocolHandler) NewDownloader(url, outputPath string) interface {
 } {
 	return NewSFTPDownloader(url, outputPath, h.cfg)
 }
-

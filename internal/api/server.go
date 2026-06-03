@@ -1,4 +1,4 @@
-﻿package api
+package api
 
 import (
 	"context"
@@ -19,15 +19,15 @@ import (
 
 type Server struct {
 	http.Server
-	taskQueue   *task.TaskQueue
-	taskStore   *task.TaskStore
-	membership  *cluster.Membership
-	localNode   *cluster.LocalNode
-	config      *config.Config
-	hub         *WebSocketHub
-	mu          sync.RWMutex
-	startedAt   time.Time
-	version     string
+	taskQueue     *task.TaskQueue
+	taskStore     *task.TaskStore
+	membership    *cluster.Membership
+	localNode     *cluster.LocalNode
+	config        *config.Config
+	hub           *WebSocketHub
+	mu            sync.RWMutex
+	startedAt     time.Time
+	version       string
 	rateLimitStop func()
 }
 
@@ -47,9 +47,9 @@ type TaskResponse struct {
 }
 
 type TaskListResponse struct {
-	Tasks   []*task.Task `json:"tasks"`
-	Total   int          `json:"total"`
-	Active  int          `json:"active"`
+	Tasks  []*task.Task `json:"tasks"`
+	Total  int          `json:"total"`
+	Active int          `json:"active"`
 }
 
 type NodeResponse struct {
@@ -57,14 +57,14 @@ type NodeResponse struct {
 }
 
 type ClusterStatusResponse struct {
-	Status       string        `json:"status"`
-	NodeCount    int           `json:"node_count"`
-	OnlineCount  int           `json:"online_count"`
-	TaskCount    int           `json:"task_count"`
-	ActiveTasks  int           `json:"active_tasks"`
-	LocalNode    cluster.Node  `json:"local_node"`
-	Version      string        `json:"version"`
-	Uptime       time.Duration `json:"uptime"`
+	Status      string        `json:"status"`
+	NodeCount   int           `json:"node_count"`
+	OnlineCount int           `json:"online_count"`
+	TaskCount   int           `json:"task_count"`
+	ActiveTasks int           `json:"active_tasks"`
+	LocalNode   cluster.Node  `json:"local_node"`
+	Version     string        `json:"version"`
+	Uptime      time.Duration `json:"uptime"`
 }
 
 type ErrorResponse struct {
@@ -114,14 +114,14 @@ func NewServer(cfg *config.Config, taskQueue *task.TaskQueue, taskStore *task.Ta
 	mux := http.NewServeMux()
 	apiMux := http.NewServeMux()
 	server := &Server{
-		taskQueue:   taskQueue,
-		taskStore:   taskStore,
-		membership:  membership,
-		localNode:   localNode,
-		config:      cfg,
-		hub:         hub,
-		startedAt:   time.Now(),
-		version:     ver,
+		taskQueue:  taskQueue,
+		taskStore:  taskStore,
+		membership: membership,
+		localNode:  localNode,
+		config:     cfg,
+		hub:        hub,
+		startedAt:  time.Now(),
+		version:    ver,
 	}
 
 	// WebSocket endpoint - no middleware needed

@@ -1,4 +1,4 @@
-﻿package downloader
+package downloader
 
 import (
 	"sync"
@@ -26,10 +26,10 @@ type adaptiveController struct {
 	lastCheckBytes int64
 	lastCheckTime  time.Time
 
-	speedThresholdLow  int64
-	speedImproveRatio  float64
-	adjustInterval     time.Duration
-	lastAdjustTime     time.Time
+	speedThresholdLow int64
+	speedImproveRatio float64
+	adjustInterval    time.Duration
+	lastAdjustTime    time.Time
 }
 
 func newAdaptiveController(maxThreads, minThreads int) *adaptiveController {

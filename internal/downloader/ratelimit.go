@@ -1,4 +1,4 @@
-﻿package downloader
+package downloader
 
 import (
 	"context"
@@ -9,11 +9,11 @@ import (
 )
 
 type RateLimiter struct {
-	rate      int64
-	burst     int64
-	tokens    int64
+	rate       int64
+	burst      int64
+	tokens     int64
 	lastUpdate time.Time
-	mu        sync.Mutex
+	mu         sync.Mutex
 }
 
 func NewRateLimiter(rate int64, burst int64) *RateLimiter {
@@ -107,14 +107,14 @@ func (r *RateLimiter) refill() {
 }
 
 type GlobalRateLimiter struct {
-	limiter         *RateLimiter
-	mu              sync.RWMutex
-	taskLimit       map[string]*RateLimiter
-	scheduleLimits  []config.ScheduleSpeedLimit
-	defaultRate     int64
-	scheduleActive  bool
-	scheduleCtx     context.Context
-	scheduleCancel  context.CancelFunc
+	limiter        *RateLimiter
+	mu             sync.RWMutex
+	taskLimit      map[string]*RateLimiter
+	scheduleLimits []config.ScheduleSpeedLimit
+	defaultRate    int64
+	scheduleActive bool
+	scheduleCtx    context.Context
+	scheduleCancel context.CancelFunc
 }
 
 var (
@@ -135,33 +135,33 @@ func GetGlobalRateLimiter() *GlobalRateLimiter {
 func (g *GlobalRateLimiter) SetScheduleLimits(limits []config.ScheduleSpeedLimit, defaultRate int64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	
+
 	g.scheduleLimits = limits
 	g.defaultRate = defaultRate
-	
+
 	// 停止旧的调度器
 	if g.scheduleCancel != nil {
 		g.scheduleCancel()
 	}
-	
+
 	if len(limits) == 0 {
 		return
 	}
-	
+
 	// 启动新的调度器
 	g.scheduleCtx, g.scheduleCancel = context.WithCancel(context.Background())
 	g.scheduleActive = true
-	
+
 	go g.runSchedule(g.scheduleCtx)
 }
 
 func (g *GlobalRateLimiter) runSchedule(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
-	
+
 	// 初始检查
 	g.checkSchedule()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -175,17 +175,17 @@ func (g *GlobalRateLimiter) runSchedule(ctx context.Context) {
 func (g *GlobalRateLimiter) checkSchedule() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	
+
 	now := time.Now()
 	currentWeekday := int(now.Weekday())
 	currentTime := now.Format("15:04")
-	
+
 	for _, limit := range g.scheduleLimits {
 		// 检查是否在指定星期
 		if limit.Weekday != nil && *limit.Weekday != currentWeekday {
 			continue
 		}
-		
+
 		// 检查时间范围
 		if currentTime >= limit.StartTime && currentTime < limit.EndTime {
 			if g.limiter.GetRate() != limit.Limit {
@@ -194,7 +194,7 @@ func (g *GlobalRateLimiter) checkSchedule() {
 			return
 		}
 	}
-	
+
 	// 没有匹配的计划，使用默认速率
 	if g.limiter.GetRate() != g.defaultRate {
 		g.limiter.SetRate(g.defaultRate)
@@ -204,7 +204,7 @@ func (g *GlobalRateLimiter) checkSchedule() {
 func (g *GlobalRateLimiter) StopSchedule() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	
+
 	if g.scheduleCancel != nil {
 		g.scheduleCancel()
 		g.scheduleCancel = nil

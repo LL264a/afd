@@ -1,4 +1,4 @@
-﻿package task
+package task
 
 import (
 	"encoding/json"
@@ -10,16 +10,16 @@ import (
 )
 
 type ControlFile struct {
-	InfoHash         string    `json:"infohash"`
-	TotalLength      int64     `json:"totalLength"`
-	CompletedLength  int64     `json:"completedLength"`
-	PieceLength      int64     `json:"pieceLength"`
-	Pieces           string    `json:"pieces"`
-	Bitfield         string    `json:"bitfield"`
-	NumPieces        int       `json:"numPieces"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
-	Status           string    `json:"status"`
+	InfoHash        string    `json:"infohash"`
+	TotalLength     int64     `json:"totalLength"`
+	CompletedLength int64     `json:"completedLength"`
+	PieceLength     int64     `json:"pieceLength"`
+	Pieces          string    `json:"pieces"`
+	Bitfield        string    `json:"bitfield"`
+	NumPieces       int       `json:"numPieces"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+	Status          string    `json:"status"`
 }
 
 func (cf *ControlFile) MarshalJSON() ([]byte, error) {

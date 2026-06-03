@@ -1,4 +1,4 @@
-﻿package cluster
+package cluster
 
 import (
 	"context"
@@ -21,10 +21,10 @@ type NodeState struct {
 }
 
 type ClusterState struct {
-	Nodes    map[string]*NodeState `json:"nodes"`
-	Tasks    map[string]string     `json:"tasks"`
-	Version  int64                 `json:"version"`
-	Updated  time.Time             `json:"updated"`
+	Nodes   map[string]*NodeState `json:"nodes"`
+	Tasks   map[string]string     `json:"tasks"`
+	Version int64                 `json:"version"`
+	Updated time.Time             `json:"updated"`
 }
 
 type SyncConfig struct {
@@ -54,13 +54,13 @@ func NewStateSync(localNodeID string, cfg *config.Config) *StateSync {
 			MaxRetries:   3,
 			RetryDelay:   2 * time.Second,
 		},
-		localNodeID:  localNodeID,
-		logger:       logger.Log,
+		localNodeID: localNodeID,
+		logger:      logger.Log,
 		clusterState: &ClusterState{
-			Nodes:    make(map[string]*NodeState),
-			Tasks:    make(map[string]string),
-			Version:  0,
-			Updated:  time.Now(),
+			Nodes:   make(map[string]*NodeState),
+			Tasks:   make(map[string]string),
+			Version: 0,
+			Updated: time.Now(),
 		},
 		stateChan: make(chan *ClusterState, 10),
 		ctx:       ctx,

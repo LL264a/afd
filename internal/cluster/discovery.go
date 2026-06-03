@@ -1,4 +1,4 @@
-﻿package cluster
+package cluster
 
 import (
 	"encoding/gob"
@@ -12,12 +12,12 @@ import (
 )
 
 const (
-	DefaultGossipPort     = 9998
-	GossipInterval        = 2 * time.Second
-	FailureTimeout        = 8 * time.Second
-	CleanupInterval       = 10 * time.Second
-	MaxGossipPacketSize   = 8192
-	GossipFanout          = 3
+	DefaultGossipPort   = 9998
+	GossipInterval      = 2 * time.Second
+	FailureTimeout      = 8 * time.Second
+	CleanupInterval     = 10 * time.Second
+	MaxGossipPacketSize = 8192
+	GossipFanout        = 3
 )
 
 type GossipMessageType byte

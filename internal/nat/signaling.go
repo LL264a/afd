@@ -1,4 +1,4 @@
-﻿package nat
+package nat
 
 import (
 	"encoding/json"
@@ -10,29 +10,29 @@ import (
 )
 
 type SignalingMessage struct {
-	Type      string `json:"type"`
-	PeerID    string `json:"peer_id"`
-	LocalAddr string `json:"local_addr"`
+	Type       string `json:"type"`
+	PeerID     string `json:"peer_id"`
+	LocalAddr  string `json:"local_addr"`
 	RemoteAddr string `json:"remote_addr"`
-	NatType   string `json:"nat_type"`
-	PublicIP  string `json:"public_ip"`
+	NatType    string `json:"nat_type"`
+	PublicIP   string `json:"public_ip"`
 	PublicPort uint16 `json:"public_port"`
 }
 
 type SignalingServer struct {
-	addr      string
-	peers     map[string]*PeerInfo
-	mu        sync.RWMutex
-	conn      *net.UDPConn
-	stopCh    chan struct{}
+	addr   string
+	peers  map[string]*PeerInfo
+	mu     sync.RWMutex
+	conn   *net.UDPConn
+	stopCh chan struct{}
 }
 
 type PeerInfo struct {
-	ID        string
-	LocalAddr string
+	ID         string
+	LocalAddr  string
 	RemoteAddr string
-	NatType   string
-	LastSeen  time.Time
+	NatType    string
+	LastSeen   time.Time
 }
 
 type SignalingClient struct {
@@ -45,8 +45,8 @@ type SignalingClient struct {
 
 func NewSignalingServer(addr string) *SignalingServer {
 	return &SignalingServer{
-		addr:  addr,
-		peers: make(map[string]*PeerInfo),
+		addr:   addr,
+		peers:  make(map[string]*PeerInfo),
 		stopCh: make(chan struct{}),
 	}
 }

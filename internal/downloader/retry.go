@@ -1,4 +1,4 @@
-﻿package downloader
+package downloader
 
 import (
 	"context"
@@ -14,18 +14,18 @@ import (
 )
 
 type RetryConfig struct {
-	MaxRetries     int
+	MaxRetries      int
 	InitialInterval time.Duration
-	MaxInterval    time.Duration
-	Multiplier     float64
+	MaxInterval     time.Duration
+	Multiplier      float64
 }
 
 func DefaultRetryConfig() RetryConfig {
 	return RetryConfig{
-		MaxRetries:     3,
+		MaxRetries:      3,
 		InitialInterval: 1 * time.Second,
-		MaxInterval:    60 * time.Second,
-		Multiplier:     2.0,
+		MaxInterval:     60 * time.Second,
+		Multiplier:      2.0,
 	}
 }
 

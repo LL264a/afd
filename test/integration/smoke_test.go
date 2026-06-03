@@ -1,4 +1,4 @@
-﻿// Package integration contains end-to-end smoke tests for NexusDL.
+// Package integration contains end-to-end smoke tests for NexusDL.
 //
 // These tests start an in-process API server backed by a real on-disk task
 // store and a temp data directory, then exercise the most common flows:
@@ -43,11 +43,11 @@ func init() {
 }
 
 type testHarness struct {
-	t      *testing.T
-	cfg    *config.Config
+	t       *testing.T
+	cfg     *config.Config
 	dataDir string
-	server *httptest.Server
-	cancel context.CancelFunc
+	server  *httptest.Server
+	cancel  context.CancelFunc
 }
 
 func newHarness(t *testing.T, opts func(*config.Config)) *testHarness {
@@ -81,11 +81,11 @@ func newHarness(t *testing.T, opts func(*config.Config)) *testHarness {
 
 	_, cancel := context.WithCancel(context.Background())
 	return &testHarness{
-		t:      t,
-		cfg:    cfg,
+		t:       t,
+		cfg:     cfg,
 		dataDir: dir,
-		server: ts,
-		cancel: cancel,
+		server:  ts,
+		cancel:  cancel,
 	}
 }
 

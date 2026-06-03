@@ -1,4 +1,4 @@
-﻿package api
+package api
 
 import (
 	"encoding/json"
@@ -535,12 +535,12 @@ func (s *JSONRPCServer) getFiles(params []interface{}) (interface{}, error) {
 	files := []map[string]interface{}{}
 	if len(safe.Chunks) > 0 {
 		files = append(files, map[string]interface{}{
-			"index":          "1",
-			"path":           filepath.Base(safe.OutputPath),
-			"length":         fmt.Sprintf("%d", safe.TotalSize),
+			"index":           "1",
+			"path":            filepath.Base(safe.OutputPath),
+			"length":          fmt.Sprintf("%d", safe.TotalSize),
 			"completedLength": fmt.Sprintf("%d", safe.DownloadedSize),
-			"selected":       "true",
-			"uris":           []map[string]string{{"uri": safe.URL, "status": "used"}},
+			"selected":        "true",
+			"uris":            []map[string]string{{"uri": safe.URL, "status": "used"}},
 		})
 	}
 	return files, nil
@@ -627,11 +627,11 @@ func (s *JSONRPCServer) getGlobalStat(_ []interface{}) (interface{}, error) {
 		speed += safe.Speed
 	}
 	return map[string]interface{}{
-		"downloadSpeed": fmt.Sprintf("%d", speed),
-		"uploadSpeed":   "0",
-		"numActive":     fmt.Sprintf("%d", active),
-		"numWaiting":    fmt.Sprintf("%d", waiting),
-		"numStopped":    fmt.Sprintf("%d", stopped),
+		"downloadSpeed":   fmt.Sprintf("%d", speed),
+		"uploadSpeed":     "0",
+		"numActive":       fmt.Sprintf("%d", active),
+		"numWaiting":      fmt.Sprintf("%d", waiting),
+		"numStopped":      fmt.Sprintf("%d", stopped),
 		"numStoppedTotal": fmt.Sprintf("%d", stopped),
 	}, nil
 }
@@ -780,15 +780,15 @@ func (s *JSONRPCServer) listMethods() (interface{}, error) {
 func (s *JSONRPCServer) taskToStatus(t *task.Task, keys []string) map[string]interface{} {
 	safe := t.GetSafe()
 	all := map[string]interface{}{
-		"gid":                safe.ID,
-		"status":             string(safe.Status),
-		"totalLength":        fmt.Sprintf("%d", safe.TotalSize),
-		"completedLength":    fmt.Sprintf("%d", safe.DownloadedSize),
-		"uploadLength":       "0",
-		"downloadSpeed":      fmt.Sprintf("%d", safe.Speed),
-		"uploadSpeed":        "0",
-		"errorMessage":       safe.Error,
-		"dir":                safe.OutputPath,
+		"gid":             safe.ID,
+		"status":          string(safe.Status),
+		"totalLength":     fmt.Sprintf("%d", safe.TotalSize),
+		"completedLength": fmt.Sprintf("%d", safe.DownloadedSize),
+		"uploadLength":    "0",
+		"downloadSpeed":   fmt.Sprintf("%d", safe.Speed),
+		"uploadSpeed":     "0",
+		"errorMessage":    safe.Error,
+		"dir":             safe.OutputPath,
 		"files": []map[string]interface{}{
 			{
 				"index":           "1",
@@ -804,14 +804,14 @@ func (s *JSONRPCServer) taskToStatus(t *task.Task, keys []string) map[string]int
 				"name": filepath.Base(safe.OutputPath),
 			},
 		},
-		"followedBy":         []string{},
-		"following":          "",
-		"belongsTo":          "",
-		"pieceLength":        "0",
-		"numPieces":          "0",
-		"connections":        "0",
-		"seeder":             "false",
-		"leecher":            "false",
+		"followedBy":  []string{},
+		"following":   "",
+		"belongsTo":   "",
+		"pieceLength": "0",
+		"numPieces":   "0",
+		"connections": "0",
+		"seeder":      "false",
+		"leecher":     "false",
 	}
 	if len(keys) == 0 {
 		return all

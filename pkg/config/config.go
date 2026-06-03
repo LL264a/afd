@@ -1,4 +1,4 @@
-﻿package config
+package config
 
 import (
 	"encoding/json"
@@ -13,13 +13,13 @@ import (
 )
 
 type ProxyConfig struct {
-	Type           string   `json:"type" yaml:"type"`
-	Host           string   `json:"host" yaml:"host"`
-	Port           int      `json:"port" yaml:"port"`
-	Username       string   `json:"username,omitempty" yaml:"username,omitempty"`
-	Password       string   `json:"password,omitempty" yaml:"password,omitempty"`
-	ExcludeList    []string `json:"exclude_list,omitempty" yaml:"exclude_list,omitempty"`
-	UseDigest      bool     `json:"use_digest,omitempty" yaml:"use_digest,omitempty"`
+	Type        string   `json:"type" yaml:"type"`
+	Host        string   `json:"host" yaml:"host"`
+	Port        int      `json:"port" yaml:"port"`
+	Username    string   `json:"username,omitempty" yaml:"username,omitempty"`
+	Password    string   `json:"password,omitempty" yaml:"password,omitempty"`
+	ExcludeList []string `json:"exclude_list,omitempty" yaml:"exclude_list,omitempty"`
+	UseDigest   bool     `json:"use_digest,omitempty" yaml:"use_digest,omitempty"`
 }
 
 func (p *ProxyConfig) IsValid() bool {
@@ -48,27 +48,27 @@ func (p *ProxyConfig) ShouldExclude(host string) bool {
 }
 
 type BTConfig struct {
-	Enabled              bool          `json:"enabled" yaml:"enabled"`
-	DownloadSpeedLimit   int64         `json:"download_speed_limit" yaml:"download_speed_limit"`
-	UploadSpeedLimit     int64         `json:"upload_speed_limit" yaml:"upload_speed_limit"`
-	Port                 int           `json:"port" yaml:"port"`
-	DataDir              string        `json:"data_dir" yaml:"data_dir"`
-	TorrentFilesDir      string        `json:"torrent_files_dir" yaml:"torrent_files_dir"`
-	MaxConnections       int           `json:"max_connections" yaml:"max_connections"`
-	MaxPeers             int           `json:"max_peers" yaml:"max_peers"`
-	SeedRatio            float64       `json:"seed_ratio" yaml:"seed_ratio"`
-	SeedTime             time.Duration `json:"seed_time" yaml:"seed_time"`
-	TrackerList          []string      `json:"tracker_list" yaml:"tracker_list"`
-	DHTEnabled           bool          `json:"dht_enabled" yaml:"dht_enabled"`
-	DHTNodes             []string      `json:"dht_nodes" yaml:"dht_nodes"`
-	DisableTCP           bool          `json:"disable_tcp" yaml:"disable_tcp"`
-	DisableUTP           bool          `json:"disable_utp" yaml:"disable_utp"`
-	PieceLength          int64         `json:"piece_length" yaml:"piece_length"`
-	SequentialDownload   bool          `json:"sequential_download" yaml:"sequential_download"`
-	FirstPiecePriority   bool          `json:"first_piece_priority" yaml:"first_piece_priority"`
-	UPNPEnabled          bool          `json:"upnp_enabled" yaml:"upnp_enabled"`
-	LocalPeerDiscovery   bool          `json:"local_peer_discovery" yaml:"local_peer_discovery"`
-	EnableSeeding        bool          `json:"enable_seeding" yaml:"enable_seeding"`
+	Enabled            bool          `json:"enabled" yaml:"enabled"`
+	DownloadSpeedLimit int64         `json:"download_speed_limit" yaml:"download_speed_limit"`
+	UploadSpeedLimit   int64         `json:"upload_speed_limit" yaml:"upload_speed_limit"`
+	Port               int           `json:"port" yaml:"port"`
+	DataDir            string        `json:"data_dir" yaml:"data_dir"`
+	TorrentFilesDir    string        `json:"torrent_files_dir" yaml:"torrent_files_dir"`
+	MaxConnections     int           `json:"max_connections" yaml:"max_connections"`
+	MaxPeers           int           `json:"max_peers" yaml:"max_peers"`
+	SeedRatio          float64       `json:"seed_ratio" yaml:"seed_ratio"`
+	SeedTime           time.Duration `json:"seed_time" yaml:"seed_time"`
+	TrackerList        []string      `json:"tracker_list" yaml:"tracker_list"`
+	DHTEnabled         bool          `json:"dht_enabled" yaml:"dht_enabled"`
+	DHTNodes           []string      `json:"dht_nodes" yaml:"dht_nodes"`
+	DisableTCP         bool          `json:"disable_tcp" yaml:"disable_tcp"`
+	DisableUTP         bool          `json:"disable_utp" yaml:"disable_utp"`
+	PieceLength        int64         `json:"piece_length" yaml:"piece_length"`
+	SequentialDownload bool          `json:"sequential_download" yaml:"sequential_download"`
+	FirstPiecePriority bool          `json:"first_piece_priority" yaml:"first_piece_priority"`
+	UPNPEnabled        bool          `json:"upnp_enabled" yaml:"upnp_enabled"`
+	LocalPeerDiscovery bool          `json:"local_peer_discovery" yaml:"local_peer_discovery"`
+	EnableSeeding      bool          `json:"enable_seeding" yaml:"enable_seeding"`
 }
 
 type ScheduleSpeedLimit struct {
@@ -98,28 +98,28 @@ func (c *BTConfig) Validate() error {
 }
 
 type DownloadConfig struct {
-	URL                  string               `json:"url,omitempty" yaml:"url,omitempty"`
-	OutputPath           string               `json:"output_path,omitempty" yaml:"output_path,omitempty"`
-	MaxConnections       int                  `json:"max_connections" yaml:"max_connections"`
-	MinChunkSize         int64                `json:"min_chunk_size" yaml:"min_chunk_size"`
-	MaxChunkSize         int64                `json:"max_chunk_size" yaml:"max_chunk_size"`
-	DefaultChunkSize     int64                `json:"default_chunk_size" yaml:"default_chunk_size"`
-	BufferSize           int                  `json:"buffer_size" yaml:"buffer_size"`
-	Timeout              time.Duration        `json:"timeout" yaml:"timeout"`
-	RetryCount           int                  `json:"retry_count" yaml:"retry_count"`
-	SpeedLimit           int64                `json:"speed_limit" yaml:"speed_limit"`
-	Proxy                *ProxyConfig         `json:"proxy,omitempty" yaml:"proxy,omitempty"`
-	BT                   *BTConfig            `json:"bt,omitempty" yaml:"bt,omitempty"`
-	PostProcess          *PostProcessConfig   `json:"post_process,omitempty" yaml:"post_process,omitempty"`
-	MinSpeed             int64                `json:"min_speed" yaml:"min_speed"`
-	MinSpeedTimeout      time.Duration        `json:"min_speed_timeout" yaml:"min_speed_timeout"`
-	PreallocateSpace     bool                 `json:"preallocate_space" yaml:"preallocate_space"`
-	SparseFile           bool                 `json:"sparse_file" yaml:"sparse_file"`
-	FileMode             os.FileMode          `json:"file_mode" yaml:"file_mode"`
-	IncludeConfig        []string             `json:"include_config,omitempty" yaml:"include_config,omitempty"`
-	MaxPerServerConn     int                  `json:"max_per_server_conn" yaml:"max_per_server_conn"`
-	ScheduleSpeedLimits  []ScheduleSpeedLimit `json:"schedule_speed_limits,omitempty" yaml:"schedule_speed_limits,omitempty"`
-	UseDigestAuth        bool                 `json:"use_digest_auth" yaml:"use_digest_auth"`
+	URL                 string               `json:"url,omitempty" yaml:"url,omitempty"`
+	OutputPath          string               `json:"output_path,omitempty" yaml:"output_path,omitempty"`
+	MaxConnections      int                  `json:"max_connections" yaml:"max_connections"`
+	MinChunkSize        int64                `json:"min_chunk_size" yaml:"min_chunk_size"`
+	MaxChunkSize        int64                `json:"max_chunk_size" yaml:"max_chunk_size"`
+	DefaultChunkSize    int64                `json:"default_chunk_size" yaml:"default_chunk_size"`
+	BufferSize          int                  `json:"buffer_size" yaml:"buffer_size"`
+	Timeout             time.Duration        `json:"timeout" yaml:"timeout"`
+	RetryCount          int                  `json:"retry_count" yaml:"retry_count"`
+	SpeedLimit          int64                `json:"speed_limit" yaml:"speed_limit"`
+	Proxy               *ProxyConfig         `json:"proxy,omitempty" yaml:"proxy,omitempty"`
+	BT                  *BTConfig            `json:"bt,omitempty" yaml:"bt,omitempty"`
+	PostProcess         *PostProcessConfig   `json:"post_process,omitempty" yaml:"post_process,omitempty"`
+	MinSpeed            int64                `json:"min_speed" yaml:"min_speed"`
+	MinSpeedTimeout     time.Duration        `json:"min_speed_timeout" yaml:"min_speed_timeout"`
+	PreallocateSpace    bool                 `json:"preallocate_space" yaml:"preallocate_space"`
+	SparseFile          bool                 `json:"sparse_file" yaml:"sparse_file"`
+	FileMode            os.FileMode          `json:"file_mode" yaml:"file_mode"`
+	IncludeConfig       []string             `json:"include_config,omitempty" yaml:"include_config,omitempty"`
+	MaxPerServerConn    int                  `json:"max_per_server_conn" yaml:"max_per_server_conn"`
+	ScheduleSpeedLimits []ScheduleSpeedLimit `json:"schedule_speed_limits,omitempty" yaml:"schedule_speed_limits,omitempty"`
+	UseDigestAuth       bool                 `json:"use_digest_auth" yaml:"use_digest_auth"`
 }
 
 func (c *DownloadConfig) Validate() error {
@@ -280,10 +280,10 @@ func DefaultBTConfig() *BTConfig {
 func DefaultDownloadConfig() *DownloadConfig {
 	return &DownloadConfig{
 		MaxConnections:      8,
-		MinChunkSize:        1024 * 1024,         // 1 MB
-		MaxChunkSize:        50 * 1024 * 1024,    // 50 MB
-		DefaultChunkSize:    10 * 1024 * 1024,    // 10 MB
-		BufferSize:          32 * 1024,           // 32 KB
+		MinChunkSize:        1024 * 1024,      // 1 MB
+		MaxChunkSize:        50 * 1024 * 1024, // 50 MB
+		DefaultChunkSize:    10 * 1024 * 1024, // 10 MB
+		BufferSize:          32 * 1024,        // 32 KB
 		Timeout:             30 * time.Second,
 		RetryCount:          3,
 		SpeedLimit:          0,
@@ -376,24 +376,24 @@ func loadConfigFile(path string, cfg *Config, loadedPaths map[string]bool) error
 	if err != nil {
 		return fmt.Errorf("invalid config path: %w", err)
 	}
-	
+
 	// 防止循环 include
 	if loadedPaths[absPath] {
 		return fmt.Errorf("circular include detected: %s", absPath)
 	}
 	loadedPaths[absPath] = true
-	
+
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return fmt.Errorf("failed to read config file %s: %w", absPath, err)
 	}
-	
+
 	// 先解析到临时配置，获取 include 列表
 	tempCfg := DefaultConfig()
 	if err := parseConfig(data, filepath.Ext(absPath), tempCfg); err != nil {
 		return fmt.Errorf("failed to parse config file %s: %w", absPath, err)
 	}
-	
+
 	// 先加载 include 的配置（优先级更低）
 	baseDir := filepath.Dir(absPath)
 	for _, includePath := range tempCfg.Download.IncludeConfig {
@@ -406,12 +406,12 @@ func loadConfigFile(path string, cfg *Config, loadedPaths map[string]bool) error
 			return err
 		}
 	}
-	
+
 	// 再合并当前配置（优先级更高）
 	if err := parseConfig(data, filepath.Ext(absPath), cfg); err != nil {
 		return fmt.Errorf("failed to parse config file %s: %w", absPath, err)
 	}
-	
+
 	return nil
 }
 

@@ -1,4 +1,4 @@
-﻿package task
+package task
 
 import (
 	"container/heap"
@@ -46,15 +46,15 @@ func (pq *priorityQueue) Pop() any {
 }
 
 type TaskQueue struct {
-	mu                 sync.RWMutex
-	tasks              map[string]*Task
-	pq                 priorityQueue
-	maxConcurrent      int
-	activeCount        int
-	OnTaskStart        TaskCallback
-	OnTaskProgress     TaskCallback
-	OnTaskComplete     TaskCallback
-	OnTaskError        TaskCallback
+	mu             sync.RWMutex
+	tasks          map[string]*Task
+	pq             priorityQueue
+	maxConcurrent  int
+	activeCount    int
+	OnTaskStart    TaskCallback
+	OnTaskProgress TaskCallback
+	OnTaskComplete TaskCallback
+	OnTaskError    TaskCallback
 }
 
 func NewTaskQueue(maxConcurrent int) *TaskQueue {

@@ -1,4 +1,4 @@
-﻿// Package webui contains a lightweight asset-integrity test for the embedded
+// Package webui contains a lightweight asset-integrity test for the embedded
 // web UI. It does NOT exercise JavaScript behaviour; it ensures the
 // static files are present, parse as HTML/JS/CSS, and reference the
 // resources they claim to.

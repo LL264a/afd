@@ -1,4 +1,4 @@
-﻿package cluster
+package cluster
 
 import (
 	"sync"
@@ -372,4 +372,3 @@ func (s *Scheduler) allTasksSnapshot() map[string]*task.Task {
 	}
 	return out
 }
-

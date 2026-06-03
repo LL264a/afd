@@ -1,4 +1,4 @@
-﻿package downloader
+package downloader
 
 import (
 	"os"
@@ -64,7 +64,7 @@ func TestServerConnectionLimiter(t *testing.T) {
 func TestPreallocateFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	filePath := tmpDir + "/test_prealloc"
-	
+
 	file, err := createTestFile(filePath)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestPreallocateFile(t *testing.T) {
 func TestPreallocateFileSparse(t *testing.T) {
 	tmpDir := t.TempDir()
 	filePath := tmpDir + "/test_sparse"
-	
+
 	file, err := createTestFile(filePath)
 	if err != nil {
 		t.Fatal(err)

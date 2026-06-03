@@ -1,4 +1,4 @@
-﻿package downloader
+package downloader
 
 import (
 	"context"
@@ -18,28 +18,28 @@ import (
 )
 
 type BTConfig struct {
-	Enabled              bool
-	DownloadSpeedLimit   int64
-	UploadSpeedLimit     int64
-	Port                 int
-	DataDir              string
-	TorrentFilesDir      string
-	MaxConnections       int
-	MaxPeers             int
-	SeedRatio            float64
-	SeedTime             time.Duration
-	TrackerList          []string
-	DHTEnabled           bool
-	DHTNodes             []string
-	DisableTCP           bool
-	DisableUTP           bool
-	PieceLength          int64
-	SequentialDownload   bool
-	FirstPiecePriority   bool
-	UPNPEnabled          bool
-	LocalPeerDiscovery   bool
-	EnableSeeding        bool
-	SelectFiles          []string // 选择性下载的文件路径列表
+	Enabled            bool
+	DownloadSpeedLimit int64
+	UploadSpeedLimit   int64
+	Port               int
+	DataDir            string
+	TorrentFilesDir    string
+	MaxConnections     int
+	MaxPeers           int
+	SeedRatio          float64
+	SeedTime           time.Duration
+	TrackerList        []string
+	DHTEnabled         bool
+	DHTNodes           []string
+	DisableTCP         bool
+	DisableUTP         bool
+	PieceLength        int64
+	SequentialDownload bool
+	FirstPiecePriority bool
+	UPNPEnabled        bool
+	LocalPeerDiscovery bool
+	EnableSeeding      bool
+	SelectFiles        []string // 选择性下载的文件路径列表
 }
 
 type TorrentDownloader struct {
@@ -277,7 +277,7 @@ func (d *TorrentDownloader) Download(ctx context.Context) error {
 	if len(d.cfg.SelectFiles) == 0 {
 		d.torrent.DownloadAll()
 	}
-	
+
 	// 使用循环检查进度直到完成
 	for {
 		select {
@@ -510,20 +510,20 @@ func NewBTDownloaderFromURL(cfg *config.DownloadConfig, url, outputPath string) 
 	Download(context.Context) error
 }, error) {
 	btCfg := &BTConfig{
-		Enabled:              true,
-		DHTEnabled:           true,
-		Port:                 6881,
-		DataDir:              "./bt-data",
-		MaxConnections:       100,
-		MaxPeers:             100,
-		TrackerList:          []string{},
-		DisableTCP:           false,
-		DisableUTP:           false,
-		SequentialDownload:   false,
-		FirstPiecePriority:   false,
-		UPNPEnabled:          true,
-		LocalPeerDiscovery:   true,
-		EnableSeeding:        true,
+		Enabled:            true,
+		DHTEnabled:         true,
+		Port:               6881,
+		DataDir:            "./bt-data",
+		MaxConnections:     100,
+		MaxPeers:           100,
+		TrackerList:        []string{},
+		DisableTCP:         false,
+		DisableUTP:         false,
+		SequentialDownload: false,
+		FirstPiecePriority: false,
+		UPNPEnabled:        true,
+		LocalPeerDiscovery: true,
+		EnableSeeding:      true,
 	}
 	if cfg != nil && cfg.BT != nil {
 		btCfg.Enabled = cfg.BT.Enabled

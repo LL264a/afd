@@ -1,4 +1,4 @@
-﻿package cluster
+package cluster
 
 import (
 	"encoding/binary"
@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	MaxMessageSize     = 16 * 1024 * 1024
-	RPCDefaultTimeout  = 30 * time.Second
-	FrameHeaderSize    = 4
+	MaxMessageSize    = 16 * 1024 * 1024
+	RPCDefaultTimeout = 30 * time.Second
+	FrameHeaderSize   = 4
 )
 
 type TaskStatus string
@@ -88,10 +88,10 @@ type GetTaskStatusResponse struct {
 }
 
 type ListTasksRequest struct {
-	NodeID  string     `json:"node_id,omitempty"`
-	Status  TaskStatus `json:"status,omitempty"`
-	Limit   int        `json:"limit"`
-	Offset  int        `json:"offset"`
+	NodeID string     `json:"node_id,omitempty"`
+	Status TaskStatus `json:"status,omitempty"`
+	Limit  int        `json:"limit"`
+	Offset int        `json:"offset"`
 }
 
 type ListTasksResponse struct {
@@ -100,9 +100,9 @@ type ListTasksResponse struct {
 }
 
 type GetNodeInfoResponse struct {
-	Node     NodeInfo `json:"node"`
-	Tasks    int      `json:"active_tasks"`
-	Uptime   string   `json:"uptime"`
+	Node   NodeInfo `json:"node"`
+	Tasks  int      `json:"active_tasks"`
+	Uptime string   `json:"uptime"`
 }
 
 type StreamTaskProgressRequest struct {

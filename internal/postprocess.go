@@ -1,4 +1,4 @@
-﻿package internal
+package internal
 
 import (
 	"sync"
@@ -66,5 +66,3 @@ func (p *PostProcessor) GetConfig() *config.PostProcessConfig {
 	defer p.mu.RUnlock()
 	return p.config
 }
-
-

@@ -1,4 +1,4 @@
-﻿package api
+package api
 
 import (
 	"crypto/subtle"
@@ -175,7 +175,7 @@ type rateLimiter struct {
 }
 
 type requestWindow struct {
-	count    int
+	count       int
 	windowStart time.Time
 }
 

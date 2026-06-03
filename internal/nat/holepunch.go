@@ -1,4 +1,4 @@
-﻿package nat
+package nat
 
 import (
 	"encoding/binary"
@@ -17,22 +17,22 @@ const (
 )
 
 type HolePuncher struct {
-	localAddr   string
-	conn        *net.UDPConn
-	peerConn    *net.UDPConn
-	mu          sync.RWMutex
-	stopCh      chan struct{}
-	stopOnce    sync.Once
-	connected   bool
-	remoteAddr  string
+	localAddr  string
+	conn       *net.UDPConn
+	peerConn   *net.UDPConn
+	mu         sync.RWMutex
+	stopCh     chan struct{}
+	stopOnce   sync.Once
+	connected  bool
+	remoteAddr string
 }
 
 type HolePunchMessage struct {
-	Type     uint16
-	Seq      uint32
-	LocalIP  string
-	LocalPort uint16
-	RemoteIP string
+	Type       uint16
+	Seq        uint32
+	LocalIP    string
+	LocalPort  uint16
+	RemoteIP   string
 	RemotePort uint16
 }
 
@@ -110,9 +110,9 @@ func (h *HolePuncher) handleMessage(msg *HolePunchMessage, addr *net.UDPAddr) {
 
 func (h *HolePuncher) sendResponse(addr *net.UDPAddr) {
 	msg := HolePunchMessage{
-		Type:     HolePunchResponse,
-		Seq:      0,
-		LocalIP:  h.conn.LocalAddr().(*net.UDPAddr).IP.String(),
+		Type:      HolePunchResponse,
+		Seq:       0,
+		LocalIP:   h.conn.LocalAddr().(*net.UDPAddr).IP.String(),
 		LocalPort: uint16(h.conn.LocalAddr().(*net.UDPAddr).Port),
 	}
 
@@ -191,9 +191,9 @@ func (h *HolePuncher) PunchWithSync(peerAddr string, localPublicIP string, local
 	_ = h.conn.LocalAddr().(*net.UDPAddr)
 
 	msg := HolePunchMessage{
-		Type:     HolePunchSync,
-		Seq:      0,
-		LocalIP:  localPublicIP,
+		Type:      HolePunchSync,
+		Seq:       0,
+		LocalIP:   localPublicIP,
 		LocalPort: localPublicPort,
 	}
 
@@ -311,7 +311,7 @@ func decodeHolePunchMessage(data []byte, msg *HolePunchMessage) error {
 }
 
 var (
-	ErrHolePunchTimeout       = &HolePunchError{"Hole punch timeout"}
+	ErrHolePunchTimeout        = &HolePunchError{"Hole punch timeout"}
 	ErrInvalidHolePunchMessage = &HolePunchError{"Invalid hole punch message"}
 )
 

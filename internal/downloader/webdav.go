@@ -1,4 +1,4 @@
-﻿package downloader
+package downloader
 
 import (
 	"context"
@@ -19,11 +19,11 @@ import (
 )
 
 type WebDAVDownloader struct {
-	client       *http.Client
-	url          string
-	outputPath   string
-	cfg          *config.DownloadConfig
-	logger       *zap.SugaredLogger
+	client     *http.Client
+	url        string
+	outputPath string
+	cfg        *config.DownloadConfig
+	logger     *zap.SugaredLogger
 
 	host string
 	path string

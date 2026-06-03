@@ -1,4 +1,4 @@
-﻿package cluster
+package cluster
 
 import (
 	"context"
@@ -18,10 +18,10 @@ type FailoverConfig struct {
 }
 
 type FailedNode struct {
-	NodeID      string
-	FailedAt    time.Time
-	RetryCount  int
-	Tasks       []string
+	NodeID     string
+	FailedAt   time.Time
+	RetryCount int
+	Tasks      []string
 }
 
 type Failover struct {

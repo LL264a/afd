@@ -1,4 +1,4 @@
-﻿package downloader
+package downloader
 
 import (
 	"context"
@@ -16,9 +16,9 @@ import (
 )
 
 type activeDownload struct {
-	task         *task.Task
-	cancel       context.CancelFunc
-	done         chan struct{}
+	task          *task.Task
+	cancel        context.CancelFunc
+	done          chan struct{}
 	lowSpeedSince time.Time
 }
 
@@ -50,14 +50,14 @@ func NewDownloadManager(taskQueue *task.TaskQueue, taskStore *task.TaskStore, hu
 
 func (m *DownloadManager) Start() {
 	logger.Log.Info("Download manager started")
-	
+
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
-		
+
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
-		
+
 		for {
 			select {
 			case <-m.stopCh:
@@ -73,7 +73,7 @@ func (m *DownloadManager) Start() {
 func (m *DownloadManager) Stop() {
 	logger.Log.Info("Stopping download manager...")
 	close(m.stopCh)
-	
+
 	m.mu.Lock()
 	for id, dl := range m.active {
 		if dl.cancel != nil {
@@ -82,7 +82,7 @@ func (m *DownloadManager) Stop() {
 		logger.Log.Infow("Stopping download", "task_id", id)
 	}
 	m.mu.Unlock()
-	
+
 	m.wg.Wait()
 
 	logger.Log.Info("Download manager stopped")
@@ -91,34 +91,34 @@ func (m *DownloadManager) Stop() {
 func (m *DownloadManager) StartDownload(t *task.Task) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if _, exists := m.active[t.ID]; exists {
 		logger.Log.Warnw("Download already active", "task_id", t.ID)
 		return
 	}
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	outputPath := t.OutputPath
 	if outputPath == "" {
 		outputPath = filepath.Join("data", "downloads", filepath.Base(t.URL))
 	}
-	
+
 	dl := &activeDownload{
 		task:   t,
 		cancel: cancel,
 		done:   make(chan struct{}),
 	}
 	m.active[t.ID] = dl
-	
+
 	// 发射开始事件
 	if m.eventEmitter != nil {
 		m.eventEmitter.EmitTaskStarted(t.ID, map[string]interface{}{
-			"url":          t.URL,
+			"url":         t.URL,
 			"output_path": outputPath,
 		})
 	}
-	
+
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
@@ -127,7 +127,7 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 			delete(m.active, t.ID)
 			m.mu.Unlock()
 		}()
-		
+
 		d, err := NewDownloaderFromURL(t.URL, outputPath, m.downloadCfg, logger.Log.Named("downloader"))
 		if err != nil {
 			t.SetError(fmt.Sprintf("failed to create downloader: %v", err))
@@ -137,14 +137,14 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 			m.taskQueue.FailTask(t.ID, err.Error())
 			return
 		}
-		
+
 		t.SetContext(ctx)
-		
+
 		// 启动进度监控 goroutine
 		progressCtx, progressCancel := context.WithCancel(ctx)
 		defer progressCancel()
 		go m.monitorDownloadProgress(progressCtx, t, d)
-		
+
 		err = d.Download(ctx)
 		if err != nil {
 			if ctx.Err() == context.Canceled {
@@ -161,7 +161,7 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 			m.taskQueue.FailTask(t.ID, err.Error())
 			return
 		}
-		
+
 		valid, err := t.VerifyDownload()
 		if err != nil {
 			t.SetError(fmt.Sprintf("checksum verification failed: %v", err))
@@ -171,7 +171,7 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 			m.taskQueue.FailTask(t.ID, fmt.Sprintf("checksum verification failed: %v", err))
 			return
 		}
-		
+
 		if !valid {
 			t.SetError("checksum mismatch")
 			if m.eventEmitter != nil {
@@ -180,17 +180,17 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 			m.taskQueue.FailTask(t.ID, "checksum mismatch")
 			return
 		}
-		
+
 		// 后处理
 		if m.postProcessor != nil {
 			// 检查是否是压缩文件
 			ext := filepath.Ext(outputPath)
-			isArchive := ext == ".zip" || ext == ".rar" || ext == ".7z" || 
+			isArchive := ext == ".zip" || ext == ".rar" || ext == ".7z" ||
 				strings.HasSuffix(ext, ".tar.gz") || strings.HasSuffix(ext, ".tgz") ||
 				strings.HasSuffix(ext, ".tar.bz2") || strings.HasSuffix(ext, ".tbz2") ||
 				strings.HasSuffix(ext, ".tar.xz") || strings.HasSuffix(ext, ".txz") ||
 				ext == ".tar"
-			
+
 			if isArchive && m.downloadCfg.PostProcess != nil && m.downloadCfg.PostProcess.Extract.Enabled {
 				logger.Log.Infow("Extracting archive", "path", outputPath)
 				if err := m.postProcessor.ProcessWithExtract(outputPath); err != nil {
@@ -202,14 +202,14 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 				}
 			}
 		}
-		
+
 		// 发射完成事件
 		if m.eventEmitter != nil {
 			m.eventEmitter.EmitTaskCompleted(t.ID, map[string]interface{}{
 				"output_path": outputPath,
 			})
 		}
-		
+
 		m.taskQueue.CompleteTask(t.ID)
 	}()
 }
@@ -243,7 +243,7 @@ func (m *DownloadManager) PauseDownload(id string) error {
 func (m *DownloadManager) GetActiveDownloads() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	ids := make([]string, 0, len(m.active))
 	for id := range m.active {
 		ids = append(ids, id)
@@ -254,7 +254,7 @@ func (m *DownloadManager) GetActiveDownloads() []string {
 func (m *DownloadManager) monitorDownloadProgress(ctx context.Context, t *task.Task, d DownloaderInterface) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -263,18 +263,18 @@ func (m *DownloadManager) monitorDownloadProgress(ctx context.Context, t *task.T
 			progress := d.Progress()
 			speed := d.Speed()
 			downloaded := d.TotalDownloaded()
-			
+
 			if m.eventEmitter != nil {
 				m.eventEmitter.EmitTaskProgress(t.ID, map[string]interface{}{
-					"progress":    progress,
-					"speed":       speed,
-					"downloaded":  downloaded,
+					"progress":   progress,
+					"speed":      speed,
+					"downloaded": downloaded,
 				})
 				m.eventEmitter.EmitDownloadSpeedChanged(t.ID, map[string]interface{}{
 					"speed": speed,
 				})
 			}
-			
+
 			// 检查最低速度
 			if m.downloadCfg.MinSpeed > 0 {
 				m.mu.Lock()

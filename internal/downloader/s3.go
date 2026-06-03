@@ -1,4 +1,4 @@
-﻿package downloader
+package downloader
 
 import (
 	"context"
@@ -19,11 +19,11 @@ import (
 )
 
 type S3Downloader struct {
-	client       *s3.Client
-	url          string
-	outputPath   string
-	cfg          *config.DownloadConfig
-	logger       *zap.SugaredLogger
+	client     *s3.Client
+	url        string
+	outputPath string
+	cfg        *config.DownloadConfig
+	logger     *zap.SugaredLogger
 
 	bucket string
 	key    string
@@ -58,13 +58,13 @@ func NewS3Downloader(url, outputPath string, cfg *config.DownloadConfig, log *za
 	})
 
 	return &S3Downloader{
-		client:        client,
-		url:           url,
-		outputPath:    outputPath,
-		cfg:           cfg,
-		logger:        log,
-		bucket:        bucket,
-		key:           key,
+		client:         client,
+		url:            url,
+		outputPath:     outputPath,
+		cfg:            cfg,
+		logger:         log,
+		bucket:         bucket,
+		key:            key,
 		lastSpeedCheck: time.Now(),
 	}, nil
 }

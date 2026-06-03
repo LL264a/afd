@@ -1,4 +1,4 @@
-﻿package downloader
+package downloader
 
 import (
 	"bufio"
@@ -522,18 +522,18 @@ func (c *FTPClient) DownloadFileRange(remotePath, localPath string, start int64)
 }
 
 type FTPDownloader struct {
-	client       *FTPClient
-	url          string
-	outputPath   string
-	cfg          *config.DownloadConfig
-	logger       *zap.SugaredLogger
+	client     *FTPClient
+	url        string
+	outputPath string
+	cfg        *config.DownloadConfig
+	logger     *zap.SugaredLogger
 
 	fileSize        int64
 	totalDownloaded int64
 	startTime       time.Time
 
-	controlFilePath     string
-	controlFile         interface{}
+	controlFilePath      string
+	controlFile          interface{}
 	controlFileCompleted int64
 	controlFileTotal     int64
 	controlFileStatus    string
@@ -565,12 +565,12 @@ func NewFTPDownloader(url, outputPath string, cfg *config.DownloadConfig, logger
 	)
 
 	return &FTPDownloader{
-		client:       client,
-		url:          url,
-		outputPath:   outputPath,
-		cfg:          cfg,
-		logger:       logger,
-		startTime:    time.Now(),
+		client:     client,
+		url:        url,
+		outputPath: outputPath,
+		cfg:        cfg,
+		logger:     logger,
+		startTime:  time.Now(),
 	}, nil
 }
 

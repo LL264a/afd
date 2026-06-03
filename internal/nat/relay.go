@@ -1,4 +1,4 @@
-﻿package nat
+package nat
 
 import (
 	"encoding/binary"
@@ -26,13 +26,13 @@ type RelayServer struct {
 }
 
 type RelayClient struct {
-	id        string
-	localAddr string
-	conn      *net.UDPConn
+	id         string
+	localAddr  string
+	conn       *net.UDPConn
 	serverAddr string
-	stopCh    chan struct{}
-	connected bool
-	relayAddr string
+	stopCh     chan struct{}
+	connected  bool
+	relayAddr  string
 }
 
 type RelayMessage struct {

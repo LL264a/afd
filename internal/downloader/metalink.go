@@ -1,4 +1,4 @@
-﻿package downloader
+package downloader
 
 import (
 	"context"
@@ -38,17 +38,17 @@ type MetalinkFile struct {
 }
 
 type Metalink3 struct {
-	XMLName xml.Name      `xml:"metalink"`
-	Version string        `xml:"version,attr"`
+	XMLName xml.Name       `xml:"metalink"`
+	Version string         `xml:"version,attr"`
 	Files   []MetalinkFile `xml:"file"`
 }
 
 type Metalink4 struct {
-	XMLName xml.Name      `xml:"metalink"`
-	XMLNS   string        `xml:"xmlns,attr"`
-	Origin  *string       `xml:"origin,omitempty"`
-	Generator *string      `xml:"generator,omitempty"`
-	Files   []MetalinkFile `xml:"file"`
+	XMLName   xml.Name       `xml:"metalink"`
+	XMLNS     string         `xml:"xmlns,attr"`
+	Origin    *string        `xml:"origin,omitempty"`
+	Generator *string        `xml:"generator,omitempty"`
+	Files     []MetalinkFile `xml:"file"`
 }
 
 type MetalinkDownloader struct {
@@ -68,13 +68,13 @@ func NewMetalinkDownloader(metalinkPath, outputDir string) *MetalinkDownloader {
 	}
 }
 
-func (m *MetalinkDownloader) SetURL(url string)    { m.metalinkPath = url }
-func (m *MetalinkDownloader) SetOutputPath(p string) { m.outputDir = p }
-func (m *MetalinkDownloader) SetControlFilePath(p string) {}
+func (m *MetalinkDownloader) SetURL(url string)             { m.metalinkPath = url }
+func (m *MetalinkDownloader) SetOutputPath(p string)        { m.outputDir = p }
+func (m *MetalinkDownloader) SetControlFilePath(p string)   {}
 func (m *MetalinkDownloader) SetControlFile(cf interface{}) {}
-func (m *MetalinkDownloader) URL() string    { return m.metalinkPath }
-func (m *MetalinkDownloader) OutputPath() string { return m.outputDir }
-func (m *MetalinkDownloader) Speed() int64   { return 0 }
+func (m *MetalinkDownloader) URL() string                   { return m.metalinkPath }
+func (m *MetalinkDownloader) OutputPath() string            { return m.outputDir }
+func (m *MetalinkDownloader) Speed() int64                  { return 0 }
 func (m *MetalinkDownloader) Progress() float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -83,21 +83,21 @@ func (m *MetalinkDownloader) Progress() float64 {
 	}
 	return float64(m.currentIndex+1) / float64(len(m.files))
 }
-func (m *MetalinkDownloader) TotalDownloaded() int64   { return 0 }
-func (m *MetalinkDownloader) ActiveThreads() int32     { return 0 }
-func (m *MetalinkDownloader) SetRateLimit(rate int64)  {}
-func (m *MetalinkDownloader) GetRateLimit() int64      { return 0 }
-func (m *MetalinkDownloader) SetRetryConfig(cfg RetryConfig) {}
-func (m *MetalinkDownloader) GetRetryConfig() RetryConfig   { return RetryConfig{} }
+func (m *MetalinkDownloader) TotalDownloaded() int64                 { return 0 }
+func (m *MetalinkDownloader) ActiveThreads() int32                   { return 0 }
+func (m *MetalinkDownloader) SetRateLimit(rate int64)                {}
+func (m *MetalinkDownloader) GetRateLimit() int64                    { return 0 }
+func (m *MetalinkDownloader) SetRetryConfig(cfg RetryConfig)         {}
+func (m *MetalinkDownloader) GetRetryConfig() RetryConfig            { return RetryConfig{} }
 func (m *MetalinkDownloader) LoadProgress(ctx context.Context) error { return nil }
-func (m *MetalinkDownloader) SaveProgress() error               { return nil }
+func (m *MetalinkDownloader) SaveProgress() error                    { return nil }
 
 func (m *MetalinkDownloader) parse() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.logger.Infow("Parsing metalink file", "path", m.metalinkPath)
-	
+
 	bytes, err := os.ReadFile(m.metalinkPath)
 	if err != nil {
 		return fmt.Errorf("failed to read metalink file: %w", err)

@@ -1,4 +1,4 @@
-﻿package api
+package api
 
 import (
 	"context"
@@ -36,9 +36,9 @@ type WSNodePayload struct {
 }
 
 type WSClusterEventPayload struct {
-	EventType string        `json:"event_type"`
-	Node      cluster.Node  `json:"node"`
-	Timestamp time.Time     `json:"timestamp"`
+	EventType string       `json:"event_type"`
+	Node      cluster.Node `json:"node"`
+	Timestamp time.Time    `json:"timestamp"`
 }
 
 type WSClient struct {

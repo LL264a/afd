@@ -1,11 +1,11 @@
-﻿package downloader
+package downloader
 
 import "github.com/nexus-dl/afd/pkg/config"
 
 type ChunkStatus int
 
 const (
-	ChunkPending    ChunkStatus = iota
+	ChunkPending ChunkStatus = iota
 	ChunkDownloading
 	ChunkDone
 	ChunkFailed

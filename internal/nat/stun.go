@@ -1,4 +1,4 @@
-﻿package nat
+package nat
 
 import (
 	"encoding/binary"
@@ -9,15 +9,15 @@ import (
 )
 
 const (
-	STUNBindingRequest    = 0x0001
-	STUNBindingResponse   = 0x0101
-	STUNBindingError      = 0x0111
-	STUNMappedAddress     = 0x0001
-	STUNResponseAddress   = 0x0002
-	STUNChangeRequest     = 0x0003
-	STUNSourceAddress     = 0x0004
-	STUNChangedAddress    = 0x0005
-	STUNXorMappedAddress  = 0x0020
+	STUNBindingRequest   = 0x0001
+	STUNBindingResponse  = 0x0101
+	STUNBindingError     = 0x0111
+	STUNMappedAddress    = 0x0001
+	STUNResponseAddress  = 0x0002
+	STUNChangeRequest    = 0x0003
+	STUNSourceAddress    = 0x0004
+	STUNChangedAddress   = 0x0005
+	STUNXorMappedAddress = 0x0020
 )
 
 var DefaultSTUNServers = []string{
@@ -61,8 +61,8 @@ type STUNResult struct {
 }
 
 type STUNClient struct {
-	servers  []string
-	conn     *net.UDPConn
+	servers   []string
+	conn      *net.UDPConn
 	localAddr string
 }
 

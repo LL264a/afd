@@ -1,4 +1,4 @@
-﻿package internal
+package internal
 
 import (
 	"bytes"
@@ -17,20 +17,20 @@ import (
 type EventType string
 
 const (
-	EventTaskStarted        EventType = "task_started"
-	EventTaskPaused         EventType = "task_paused"
-	EventTaskResumed        EventType = "task_resumed"
-	EventTaskCompleted      EventType = "task_completed"
-	EventTaskFailed         EventType = "task_failed"
-	EventTaskProgress       EventType = "task_progress"
+	EventTaskStarted          EventType = "task_started"
+	EventTaskPaused           EventType = "task_paused"
+	EventTaskResumed          EventType = "task_resumed"
+	EventTaskCompleted        EventType = "task_completed"
+	EventTaskFailed           EventType = "task_failed"
+	EventTaskProgress         EventType = "task_progress"
 	EventDownloadSpeedChanged EventType = "download_speed_changed"
 )
 
 type Event struct {
-	Type      EventType         `json:"type"`
-	TaskID    string            `json:"task_id"`
+	Type      EventType              `json:"type"`
+	TaskID    string                 `json:"task_id"`
 	Data      map[string]interface{} `json:"data"`
-	Timestamp time.Time         `json:"timestamp"`
+	Timestamp time.Time              `json:"timestamp"`
 }
 
 type EventHandler interface {
@@ -39,10 +39,10 @@ type EventHandler interface {
 }
 
 type HTTPHandler struct {
-	URL       string
-	Client    *http.Client
-	Headers   map[string]string
-	mu        sync.Mutex
+	URL     string
+	Client  *http.Client
+	Headers map[string]string
+	mu      sync.Mutex
 }
 
 func NewHTTPHandler(url string, headers map[string]string) *HTTPHandler {

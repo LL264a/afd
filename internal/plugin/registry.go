@@ -1,4 +1,4 @@
-﻿package plugin
+package plugin
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 )
 
 type Registry struct {
-	mu        sync.RWMutex
-	builtin   map[string]PluginFactory
+	mu         sync.RWMutex
+	builtin    map[string]PluginFactory
 	discovered map[string]Plugin
 }
 
@@ -21,7 +21,7 @@ type PluginFactory func() Plugin
 
 func NewRegistry() *Registry {
 	return &Registry{
-		builtin:   make(map[string]PluginFactory),
+		builtin:    make(map[string]PluginFactory),
 		discovered: make(map[string]Plugin),
 	}
 }

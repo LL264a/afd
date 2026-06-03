@@ -1,4 +1,4 @@
-﻿package downloader
+package downloader
 
 import (
 	"bufio"
@@ -26,20 +26,20 @@ import (
 )
 
 type Downloader struct {
-	cfg              *config.DownloadConfig
-	retryConfig      RetryConfig
-	client           *http.Client
-	logger           *zap.SugaredLogger
-	url              string
-	altURLs          []string
-	outputPath       string
-	controlFile      *task.ControlFile
-	controlFilePath  string
-	rateLimiter      *RateLimiter
-	proxy            *config.ProxyConfig
+	cfg               *config.DownloadConfig
+	retryConfig       RetryConfig
+	client            *http.Client
+	logger            *zap.SugaredLogger
+	url               string
+	altURLs           []string
+	outputPath        string
+	controlFile       *task.ControlFile
+	controlFilePath   string
+	rateLimiter       *RateLimiter
+	proxy             *config.ProxyConfig
 	torrentDownloader *TorrentDownloader
-	cookieJar        *cookiejar.Jar
-	cookieFile       string
+	cookieJar         *cookiejar.Jar
+	cookieFile        string
 
 	speedWindow []speedSample
 	swHead      int
@@ -54,13 +54,13 @@ type Downloader struct {
 
 	adaptive *adaptiveController
 
-	lastSaveTime    time.Time
-	sinceLastSave   int64
-	saveInterval    time.Duration
-	progressChan    chan struct{}
-	done            chan struct{}
+	lastSaveTime  time.Time
+	sinceLastSave int64
+	saveInterval  time.Duration
+	progressChan  chan struct{}
+	done          chan struct{}
 
-	diskCache       *DiskCache
+	diskCache *DiskCache
 }
 
 var globalTorrentDownloader *TorrentDownloader
@@ -98,22 +98,22 @@ func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downl
 	}
 
 	transport := &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: maxConnsPerHost,
-		MaxConnsPerHost:     maxConnsPerHost,
-		IdleConnTimeout:     90 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   maxConnsPerHost,
+		MaxConnsPerHost:       maxConnsPerHost,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		ForceAttemptHTTP2:   true,
-		DisableCompression:  false,
-		DisableKeepAlives:   false,
-		ReadBufferSize:      32 * 1024,
-		WriteBufferSize:     32 * 1024,
+		ForceAttemptHTTP2:      true,
+		DisableCompression:     false,
+		DisableKeepAlives:      false,
+		ReadBufferSize:         32 * 1024,
+		WriteBufferSize:        32 * 1024,
 		MaxResponseHeaderBytes: 256 * 1024,
 	}
 
@@ -154,18 +154,18 @@ func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downl
 	}
 
 	d := &Downloader{
-		cfg:           cfg,
-		retryConfig:   retryConfig,
-		client:        client,
-		logger:        logger,
-		proxy:         proxyCfg,
-		cookieJar:     jar,
-		speedWindow:   make([]speedSample, 20),
-		adaptive:      newAdaptiveController(cfg.MaxConnections, 1),
-		saveInterval:  5 * time.Second,
-		rateLimiter:   rateLimiter,
-		diskCache:     NewDiskCache(),
-		done:          make(chan struct{}),
+		cfg:          cfg,
+		retryConfig:  retryConfig,
+		client:       client,
+		logger:       logger,
+		proxy:        proxyCfg,
+		cookieJar:    jar,
+		speedWindow:  make([]speedSample, 20),
+		adaptive:     newAdaptiveController(cfg.MaxConnections, 1),
+		saveInterval: 5 * time.Second,
+		rateLimiter:  rateLimiter,
+		diskCache:    NewDiskCache(),
+		done:         make(chan struct{}),
 	}
 
 	d.loadCookies()
@@ -1027,11 +1027,11 @@ func (d *Downloader) GetAltURLs() []string {
 }
 
 type DiskCache struct {
-	cacheDir   string
-	maxSize    int64
-	curSize    int64
-	cacheMap   map[string]*cacheItem
-	mu         sync.Mutex
+	cacheDir string
+	maxSize  int64
+	curSize  int64
+	cacheMap map[string]*cacheItem
+	mu       sync.Mutex
 }
 
 // ServerConnectionLimiter 每个服务器连接数限制器
@@ -1186,7 +1186,7 @@ func preallocateFile(file *os.File, size int64, sparse bool) error {
 	if stat.Size() >= size {
 		return nil
 	}
-	
+
 	if sparse {
 		// 稀疏文件：只设置文件大小，不预先分配磁盘块
 		if err := file.Truncate(size); err != nil {
@@ -1194,7 +1194,7 @@ func preallocateFile(file *os.File, size int64, sparse bool) error {
 		}
 		return nil
 	}
-	
+
 	// 先尝试通过写入最后一个字节来强制分配
 	if _, err := file.Seek(size-1, 0); err != nil {
 		return err
@@ -1202,7 +1202,7 @@ func preallocateFile(file *os.File, size int64, sparse bool) error {
 	if _, err := file.Write([]byte{0}); err != nil {
 		return err
 	}
-	
+
 	// 现在 truncate 到正确大小
 	return file.Truncate(size)
 }

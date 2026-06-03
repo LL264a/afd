@@ -1,4 +1,4 @@
-﻿package task
+package task
 
 import (
 	"os"

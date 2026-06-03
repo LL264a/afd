@@ -1,12 +1,12 @@
-﻿package config
+package config
 
 type ExtractConfig struct {
-	Enabled            bool     `json:"enabled"`
-	OutputDir          string   `json:"output_dir"`
-	DeleteAfterExtract bool     `json:"delete_after_extract"`
-	Overwrite          bool     `json:"overwrite"`
-	Password           string   `json:"password,omitempty"`
-	StripComponents    int      `json:"strip_components"`
+	Enabled            bool   `json:"enabled"`
+	OutputDir          string `json:"output_dir"`
+	DeleteAfterExtract bool   `json:"delete_after_extract"`
+	Overwrite          bool   `json:"overwrite"`
+	Password           string `json:"password,omitempty"`
+	StripComponents    int    `json:"strip_components"`
 }
 
 type MoveConfig struct {
@@ -42,7 +42,7 @@ func DefaultExtractConfig() *ExtractConfig {
 func DefaultMoveConfig() *MoveConfig {
 	return &MoveConfig{
 		Enabled:      false,
-		Destination: "",
+		Destination:  "",
 		Overwrite:    false,
 		DeleteSource: false,
 	}

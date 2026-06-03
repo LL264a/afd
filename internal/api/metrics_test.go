@@ -1,4 +1,4 @@
-﻿package api
+package api
 
 import (
 	"fmt"
@@ -84,7 +84,10 @@ func TestPerTaskLRU_CapAndEviction(t *testing.T) {
 }
 
 func TestSplitPath(t *testing.T) {
-	cases := []struct{ in string; want []string }{
+	cases := []struct {
+		in   string
+		want []string
+	}{
 		{"a/b/c", []string{"a", "b", "c"}},
 		{"/a/b/c/", []string{"a", "b", "c"}},
 		{"a", []string{"a"}},

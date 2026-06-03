@@ -1,4 +1,4 @@
-﻿package downloader
+package downloader
 
 import (
 	"context"
@@ -18,14 +18,14 @@ import (
 )
 
 type ProxyAuthTransport struct {
-	Transport    http.RoundTripper
-	Username     string
-	Password     string
-	UseDigest    bool
-	ExcludeList  []string
-	digestNonce  string
-	digestRealm  string
-	digestQOP    string
+	Transport   http.RoundTripper
+	Username    string
+	Password    string
+	UseDigest   bool
+	ExcludeList []string
+	digestNonce string
+	digestRealm string
+	digestQOP   string
 }
 
 func (t *ProxyAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -57,7 +57,7 @@ func (t *ProxyAuthTransport) RoundTrip(req *http.Request) (*http.Response, error
 		if authHeader != "" {
 			t.parseDigestChallenge(authHeader)
 			resp.Body.Close()
-			
+
 			// 重新发起请求
 			if t.digestNonce != "" {
 				newReq := cloneRequest(req)
@@ -114,7 +114,7 @@ func (t *ProxyAuthTransport) createDigestAuth(method, uri string) string {
 	nc := "00000001"
 	cnonce := generateCNonce()
 	response := fmt.Sprintf("%x", md5.Sum([]byte(ha1+":"+t.digestNonce+":"+nc+":"+cnonce+":"+t.digestQOP+":"+ha2)))
-	
+
 	return fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", qop=%s, nc=%s, cnonce="%s", response="%s"`,
 		t.Username, t.digestRealm, t.digestNonce, uri, t.digestQOP, nc, cnonce, response)
 }
@@ -125,16 +125,16 @@ func generateCNonce() string {
 
 func cloneRequest(req *http.Request) *http.Request {
 	newReq := &http.Request{
-		Method: req.Method,
-		URL:    req.URL,
-		Header: make(http.Header),
-		Body:   req.Body,
-		GetBody: req.GetBody,
+		Method:        req.Method,
+		URL:           req.URL,
+		Header:        make(http.Header),
+		Body:          req.Body,
+		GetBody:       req.GetBody,
 		ContentLength: req.ContentLength,
-		Host: req.Host,
-		Proto: req.Proto,
-		ProtoMajor: req.ProtoMajor,
-		ProtoMinor: req.ProtoMinor,
+		Host:          req.Host,
+		Proto:         req.Proto,
+		ProtoMajor:    req.ProtoMajor,
+		ProtoMinor:    req.ProtoMinor,
 	}
 	for k, v := range req.Header {
 		newReq.Header[k] = v
@@ -221,7 +221,7 @@ func CreateSOCKS4ProxyClient(proxyCfg *config.ProxyConfig, timeout time.Duration
 	}
 
 	socksAddr := fmt.Sprintf("%s:%d", proxyCfg.Host, proxyCfg.Port)
-	
+
 	// 简单的 SOCKS4/4a 实现
 	dialer := &socks4Dialer{
 		addr:     socksAddr,
@@ -264,8 +264,8 @@ func (d *socks4Dialer) Dial(network, addr string) (net.Conn, error) {
 
 	// SOCKS4 请求
 	req := make([]byte, 0, 9+len(d.username)+1+len(host)+1)
-	req = append(req, 4)          // SOCKS version
-	req = append(req, 1)          // CONNECT command
+	req = append(req, 4)                         // SOCKS version
+	req = append(req, 1)                         // CONNECT command
 	req = append(req, byte(port>>8), byte(port)) // port (network byte order)
 
 	if d.is4a {
@@ -281,7 +281,7 @@ func (d *socks4Dialer) Dial(network, addr string) (net.Conn, error) {
 	}
 	req = append(req, []byte(d.username)...)
 	req = append(req, 0)
-	
+
 	if d.is4a {
 		// SOCKS4a: 附加域名
 		req = append(req, []byte(host)...)
@@ -329,9 +329,9 @@ func CreateProxyClient(proxyCfg *config.ProxyConfig, timeout time.Duration, useD
 }
 
 type ProxyManager struct {
-	mu           sync.RWMutex
-	globalProxy  *config.ProxyConfig
-	taskProxies  map[string]*config.ProxyConfig
+	mu          sync.RWMutex
+	globalProxy *config.ProxyConfig
+	taskProxies map[string]*config.ProxyConfig
 }
 
 func NewProxyManager() *ProxyManager {
