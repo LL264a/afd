@@ -3,18 +3,14 @@ name: Release
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'v*'
   workflow_dispatch:
 
 permissions:
   contents: write
-  packages: write
-  id-token: write
 
 env:
-  GO_VERSION: '1.22'
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  GO_VERSION: '1.24'
 
 jobs:
   build:
@@ -23,42 +19,73 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            goos: linux
+          - goos: linux
             goarch: amd64
             ext: ''
-          - os: ubuntu-latest
-            goos: linux
+          - goos: linux
             goarch: arm64
             ext: ''
-          - os: macos-latest
-            goos: darwin
+          - goos: linux
+            goarch: "386"
+            ext: ''
+          - goos: linux
+            goarch: arm
+            ext: ''
+          - goos: linux
+            goarch: mips
+            ext: ''
+          - goos: linux
+            goarch: mipsle
+            ext: ''
+          - goos: linux
+            goarch: s390x
+            ext: ''
+          - goos: linux
+            goarch: riscv64
+            ext: ''
+          - goos: darwin
             goarch: amd64
             ext: ''
-          - os: macos-latest
-            goos: darwin
+          - goos: darwin
             goarch: arm64
             ext: ''
-          - os: windows-latest
-            goos: windows
+          - goos: windows
             goarch: amd64
-            ext: '.exe'
-    runs-on: ${{ matrix.os }}
+            ext: .exe
+          - goos: windows
+            goarch: arm64
+            ext: .exe
+          - goos: windows
+            goarch: "386"
+            ext: .exe
+          - goos: freebsd
+            goarch: amd64
+            ext: ''
+          - goos: freebsd
+            goarch: arm64
+            ext: ''
+          - goos: openbsd
+            goarch: amd64
+            ext: ''
+          - goos: netbsd
+            goarch: amd64
+            ext: ''
+          - goos: solaris
+            goarch: amd64
+            ext: ''
+          - goos: illumos
+            goarch: amd64
+            ext: ''
+          - goos: js
+            goarch: wasm
+            ext: .wasm
+    runs-on: ubuntu-latest
     env:
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
       CGO_ENABLED: '0'
     steps:
       - uses: actions/checkout@v4
-
-      - name: Read version
-        id: ver
-        shell: bash
-        run: |
-          VERSION=${GITHUB_REF_NAME:-${GITHUB_SHA::7}}
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "commit=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
-          echo "build_time=$(date -u +%FT%TZ)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-go@v5
         with:
@@ -67,143 +94,26 @@ jobs:
 
       - name: Build
         run: |
-          mkdir -p dist
+          OUTPUT_NAME="afd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
           go build -trimpath \
-            -ldflags="-s -w -X main.Version=${{ steps.ver.outputs.version }} -X main.Commit=${{ steps.ver.outputs.commit }} -X main.BuildTime=${{ steps.ver.outputs.build_time }}" \
-            -o dist/nexus-dl-${GOOS}-${GOARCH}${{ matrix.ext }} \
-            ./cmd/nexus-dl
+            -ldflags="-s -w -X main.Version=${GITHUB_REF_NAME:-dev} -X main.Commit=${GITHUB_SHA::12}" \
+            -o "${OUTPUT_NAME}" \
+            ./cmd/afd
 
       - name: Checksum
-        working-directory: dist
-        run: sha256sum nexus-dl-${GOOS}-${GOARCH}${{ matrix.ext }} > nexus-dl-${GOOS}-${GOARCH}}${{ matrix.ext }}.sha256
+        run: sha256sum afd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} > afd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}.sha256
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: nexus-dl-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: afd-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            dist/nexus-dl-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
-            dist/nexus-dl-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}.sha256
-
-  sbom:
-    name: Generate SBOM
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Install syft
-        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
-
-      - name: Generate CycloneDX SBOM
-        run: |
-          syft scan dir:. -o cyclonedx-json=dist/sbom.cdx.json
-          syft scan dir:. -o spdx-json=dist/sbom.spdx.json
-
-      - name: Upload SBOM artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom
-          path: |
-            dist/sbom.cdx.json
-            dist/sbom.spdx.json
-
-  docker:
-    name: Build & push Docker image
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Read version
-        id: ver
-        run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "short_sha=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
-          echo "build_time=$(date -u +%FT%TZ)" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: ${{ startsWith(github.ref, 'refs/tags/') }}
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.short_sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          labels: |
-            org.opencontainers.image.title=nexus-dl
-            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
-            org.opencontainers.image.revision=${{ steps.ver.outputs.short_sha }}
-            org.opencontainers.image.created=${{ steps.ver.outputs.build_time }}
-            org.opencontainers.image.licenses=MIT
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          build-args: |
-            VERSION=${{ steps.ver.outputs.version }}
-            COMMIT=${{ steps.ver.outputs.short_sha }}
-            BUILD_TIME=${{ steps.ver.outputs.build_time }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
-
-  sign:
-    name: Sign binaries (cosign)
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
-      - name: Sign binaries
-        run: |
-          find artifacts -name 'nexus-dl-*' -type f -not -name '*.sha256' | while read f; do
-            cosign sign-blob --yes --output-signature "$f.sig" --output-certificate "$f.pem" "$f"
-          done
-      - name: Upload signatures
-        uses: actions/upload-artifact@v4
-        with:
-          name: signatures
-          path: artifacts/**/*.sig
-          if-no-files-found: warn
+            afd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+            afd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}.sha256
 
   release:
     name: Create GitHub Release
-    needs: [build, sbom, sign]
+    needs: build
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
@@ -217,9 +127,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: |
-            artifacts/nexus-dl-*
-            artifacts/sbom/*
-            artifacts/signatures/*
+          files: artifacts/afd-*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
