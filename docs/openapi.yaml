@@ -1,0 +1,414 @@
+openapi: 3.0.3
+info:
+  title: NexusDL REST API
+  version: 0.1.0
+  description: |
+    REST API for NexusDL — a distributed, multi-protocol download system.
+
+    Most endpoints require authentication via `Authorization: Bearer <token>`
+    or `X-API-Key: <token>` when `api.auth_token` is configured on the server.
+  contact:
+    name: NexusDL
+    url: https://github.com/nexus-dl/nexus-dl
+  license:
+    name: MIT
+    url: https://github.com/nexus-dl/nexus-dl/blob/main/LICENSE
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: tasks
+    description: Download task management
+  - name: cluster
+    description: Cluster membership and status
+  - name: config
+    description: Runtime configuration
+  - name: ops
+    description: Operational endpoints (health, metrics)
+
+security:
+  - bearerAuth: []
+  - apiKey: []
+  - {}
+
+paths:
+  /api/tasks:
+    get:
+      tags: [tasks]
+      summary: List all tasks
+      operationId: listTasks
+      responses:
+        '200':
+          description: Task list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tasks, total, active]
+                properties:
+                  tasks:
+                    type: array
+                    items: { $ref: '#/components/schemas/Task' }
+                  total:
+                    type: integer
+                  active:
+                    type: integer
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [tasks]
+      summary: Add a new download task
+      operationId: addTask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddTaskRequest' }
+      responses:
+        '201':
+          description: Task created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [task]
+                properties:
+                  task: { $ref: '#/components/schemas/Task' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/tasks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+    get:
+      tags: [tasks]
+      summary: Get a task by ID
+      operationId: getTask
+      responses:
+        '200':
+          description: Task details
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [task]
+                properties:
+                  task: { $ref: '#/components/schemas/Task' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [tasks]
+      summary: Remove a task
+      operationId: removeTask
+      responses:
+        '204': { description: Task removed }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/tasks/{id}/pause:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+    post:
+      tags: [tasks]
+      summary: Pause a running task
+      operationId: pauseTask
+      responses:
+        '200': { description: Paused }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Task is not in a pausable state
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+
+  /api/tasks/{id}/resume:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+    post:
+      tags: [tasks]
+      summary: Resume a paused task
+      operationId: resumeTask
+      responses:
+        '200': { description: Resumed }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Task is not in a resumable state
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+
+  /api/tasks/pause-all:
+    post:
+      tags: [tasks]
+      summary: Pause all running/pending tasks
+      operationId: pauseAll
+      responses:
+        '200': { description: All tasks paused }
+
+  /api/tasks/resume-all:
+    post:
+      tags: [tasks]
+      summary: Resume all paused tasks
+      operationId: resumeAll
+      responses:
+        '200': { description: All tasks resumed }
+
+  /api/nodes:
+    get:
+      tags: [cluster]
+      summary: List cluster nodes
+      operationId: listNodes
+      responses:
+        '200':
+          description: Node list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nodes]
+                properties:
+                  nodes:
+                    type: array
+                    items: { $ref: '#/components/schemas/Node' }
+
+  /api/status:
+    get:
+      tags: [cluster]
+      summary: Cluster status summary
+      operationId: getStatus
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClusterStatus' }
+
+  /api/log-level:
+    get:
+      tags: [config]
+      summary: Get current log level
+      operationId: getLogLevel
+      responses:
+        '200':
+          description: Current level
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [level]
+                properties:
+                  level:
+                    type: string
+                    enum: [debug, info, warn, error]
+    post:
+      tags: [config]
+      summary: Set log level at runtime
+      operationId: setLogLevel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [level]
+              properties:
+                level:
+                  type: string
+                  enum: [debug, info, warn, error]
+      responses:
+        '200': { description: Level updated }
+
+  /api/config/reload:
+    post:
+      tags: [config]
+      summary: Reload configuration from disk
+      operationId: reloadConfig
+      responses:
+        '200': { description: Reloaded }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /health:
+    get:
+      tags: [ops]
+      summary: Liveness probe
+      security: []
+      operationId: getHealth
+      responses:
+        '200':
+          description: Alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, example: ok }
+
+  /ready:
+    get:
+      tags: [ops]
+      summary: Readiness probe
+      security: []
+      operationId: getReady
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, example: ready }
+
+  /metrics:
+    get:
+      tags: [ops]
+      summary: Prometheus metrics
+      security: []
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Metrics
+          content:
+            text/plain:
+              schema: { type: string }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  parameters:
+    TaskID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      description: Task UUID
+
+  schemas:
+    TaskStatus:
+      type: string
+      enum: [pending, downloading, paused, done, failed, cancelled]
+
+    Task:
+      type: object
+      required: [id, url, output_path, status, priority]
+      properties:
+        id: { type: string }
+        url: { type: string, format: uri }
+        output_path: { type: string }
+        status: { $ref: '#/components/schemas/TaskStatus' }
+        total_size: { type: integer, format: int64 }
+        downloaded_size: { type: integer, format: int64 }
+        speed: { type: integer, format: int64, description: 'bytes/sec' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        target_node: { type: string }
+        protocol:
+          type: string
+          enum: [http, https, ftp, ftps, s3, webdav, sftp, bittorrent, metalink]
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+        chunks:
+          type: array
+          items: { $ref: '#/components/schemas/Chunk' }
+        error: { type: string }
+        priority: { type: integer, minimum: 0, maximum: 10 }
+        checksum_type:
+          type: string
+          enum: [md5, sha1, sha256, sha512, none]
+        checksum_value: { type: string }
+
+    Chunk:
+      type: object
+      required: [index, start, end, status]
+      properties:
+        index: { type: integer }
+        start: { type: integer, format: int64 }
+        end: { type: integer, format: int64 }
+        downloaded: { type: integer, format: int64 }
+        status: { $ref: '#/components/schemas/TaskStatus' }
+
+    AddTaskRequest:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, format: uri, description: 'HTTP(S)/FTP(S)/S3/WebDAV/SFTP/magnet/.torrent/.metalink' }
+        output_path: { type: string, description: 'Absolute path; must be inside data_dir' }
+        target_node: { type: string, description: 'Dispatch to a specific cluster node' }
+        priority: { type: integer, minimum: 0, maximum: 10, default: 5 }
+        checksum_type: { type: string, enum: [md5, sha1, sha256, sha512] }
+        checksum_value: { type: string }
+        headers:
+          type: object
+          additionalProperties: { type: string }
+        proxy: { type: string }
+
+    Node:
+      type: object
+      required: [id, name, status, load]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        addr: { type: string }
+        grpc_port: { type: integer }
+        api_port: { type: integer }
+        status:
+          type: string
+          enum: [online, offline]
+        load: { type: integer, minimum: 0, maximum: 100 }
+        tags:
+          type: object
+          additionalProperties: { type: string }
+        last_seen: { type: string, format: date-time }
+
+    ClusterStatus:
+      type: object
+      required: [status, node_count, online_count, task_count, active_tasks, version]
+      properties:
+        status: { type: string, example: healthy }
+        node_count: { type: integer }
+        online_count: { type: integer }
+        task_count: { type: integer }
+        active_tasks: { type: integer }
+        version: { type: string }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, description: 'Human-readable error message' }
+        code: { type: string, description: 'Machine-readable error code' }
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    Unauthorized:
+      description: Missing or invalid auth
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    RateLimited:
+      description: Too many requests
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    InternalError:
+      description: Server error
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
