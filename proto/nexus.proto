@@ -1,0 +1,119 @@
+syntax = "proto3";
+
+package nexus;
+
+option go_package = "github.com/nexus-dl/nexus-dl/proto/nexus";
+
+service Nexus {
+    rpc SubmitTask(SubmitTaskRequest) returns (SubmitTaskResponse);
+    rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+    rpc PauseTask(PauseTaskRequest) returns (PauseTaskResponse);
+    rpc ResumeTask(ResumeTaskRequest) returns (ResumeTaskResponse);
+    rpc GetTaskStatus(GetTaskStatusRequest) returns (GetTaskStatusResponse);
+    rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+    rpc GetNodeInfo(GetNodeInfoRequest) returns (GetNodeInfoResponse);
+    rpc StreamTaskProgress(StreamTaskProgressRequest) returns (stream StreamTaskProgressResponse);
+}
+
+message SubmitTaskRequest {
+    string url = 1;
+    string output_path = 2;
+    string node_id = 3;
+}
+
+message SubmitTaskResponse {
+    string task_id = 1;
+}
+
+message CancelTaskRequest {
+    string task_id = 1;
+}
+
+message CancelTaskResponse {
+    bool success = 1;
+}
+
+message PauseTaskRequest {
+    string task_id = 1;
+}
+
+message PauseTaskResponse {
+    bool success = 1;
+}
+
+message ResumeTaskRequest {
+    string task_id = 1;
+}
+
+message ResumeTaskResponse {
+    bool success = 1;
+}
+
+message GetTaskStatusRequest {
+    string task_id = 1;
+}
+
+message GetTaskStatusResponse {
+    TaskInfo task = 1;
+}
+
+message ListTasksRequest {
+    string node_id = 1;
+    string status = 2;
+    int32 limit = 3;
+    int32 offset = 4;
+}
+
+message ListTasksResponse {
+    repeated TaskInfo tasks = 1;
+    int32 total = 2;
+}
+
+message GetNodeInfoRequest {}
+
+message GetNodeInfoResponse {
+    NodeInfo node = 1;
+    int32 active_tasks = 2;
+    string uptime = 3;
+}
+
+message StreamTaskProgressRequest {
+    string task_id = 1;
+}
+
+message StreamTaskProgressResponse {
+    string task_id = 1;
+    double progress = 2;
+    int64 speed = 3;
+    string status = 4;
+    int64 timestamp = 5;
+}
+
+message TaskInfo {
+    string id = 1;
+    string url = 2;
+    string output_path = 3;
+    string status = 4;
+    double progress = 5;
+    int64 size = 6;
+    int64 downloaded = 7;
+    int64 speed = 8;
+    int64 created_at = 9;
+    int64 updated_at = 10;
+    string node_id = 11;
+    string error = 12;
+}
+
+message NodeInfo {
+    string id = 1;
+    string name = 2;
+    string addr = 3;
+    int32 grpc_port = 4;
+    int32 api_port = 5;
+    string status = 6;
+    int32 load = 7;
+    map<string, string> tags = 8;
+    int64 last_seen = 9;
+    int64 started_at = 10;
+    string version = 11;
+}
