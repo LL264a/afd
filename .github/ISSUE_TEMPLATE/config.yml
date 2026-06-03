@@ -1,0 +1,9 @@
+# Disable blank issue creation; users must pick a template.
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/nexus-dl/nexus-dl#readme
+    about: Read the README and CHANGELOG first.
+  - name: Security
+    url: https://github.com/nexus-dl/nexus-dl/blob/main/SECURITY.md
+    about: Report security issues privately — do not file a public issue.
