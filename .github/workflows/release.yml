@@ -13,13 +13,7 @@ jobs:
       matrix:
         include:
           - goos: linux
-            goarch: 386
-            ext: ''
-          - goos: linux
             goarch: amd64
-            ext: ''
-          - goos: linux
-            goarch: arm
             ext: ''
           - goos: linux
             goarch: arm64
@@ -31,56 +25,8 @@ jobs:
             goarch: arm64
             ext: ''
           - goos: windows
-            goarch: 386
-            ext: .exe
-          - goos: windows
             goarch: amd64
             ext: .exe
-          - goos: windows
-            goarch: arm64
-            ext: .exe
-          - goos: freebsd
-            goarch: 386
-            ext: ''
-          - goos: freebsd
-            goarch: amd64
-            ext: ''
-          - goos: freebsd
-            goarch: arm
-            ext: ''
-          - goos: freebsd
-            goarch: arm64
-            ext: ''
-          - goos: openbsd
-            goarch: 386
-            ext: ''
-          - goos: openbsd
-            goarch: amd64
-            ext: ''
-          - goos: openbsd
-            goarch: arm
-            ext: ''
-          - goos: openbsd
-            goarch: arm64
-            ext: ''
-          - goos: netbsd
-            goarch: 386
-            ext: ''
-          - goos: netbsd
-            goarch: amd64
-            ext: ''
-          - goos: netbsd
-            goarch: arm
-            ext: ''
-          - goos: netbsd
-            goarch: arm64
-            ext: ''
-          - goos: dragonfly
-            goarch: amd64
-            ext: ''
-          - goos: solaris
-            goarch: amd64
-            ext: ''
 
     steps:
       - name: Checkout code
@@ -97,8 +43,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           OUTPUT_NAME="afd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
-          CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=${{ github.ref_name }}" -o "${OUTPUT_NAME}" ./cmd/afd
-          ls -la "${OUTPUT_NAME}"
+          CGO_ENABLED=0 go build -ldflags="-s -w" -o "${OUTPUT_NAME}" ./cmd/afd
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -113,17 +58,11 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
-
-      - name: List artifacts
-        run: ls -la artifacts/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -131,48 +70,5 @@ jobs:
           files: artifacts/*
           draft: false
           prerelease: false
-          generate_release_notes: true
-          name: ${{ github.ref_name }}
-          body: |
-            ## AFD ${{ github.ref_name }} Release
-
-            ### Downloads
-
-            | Platform | Architecture | File |
-            |----------|--------------|------|
-            | Linux | 386 | afd-linux-386 |
-            | Linux | amd64 | afd-linux-amd64 |
-            | Linux | arm | afd-linux-arm |
-            | Linux | arm64 | afd-linux-arm64 |
-            | macOS | amd64 | afd-darwin-amd64 |
-            | macOS | arm64 | afd-darwin-arm64 |
-            | Windows | 386 | afd-windows-386.exe |
-            | Windows | amd64 | afd-windows-amd64.exe |
-            | Windows | arm64 | afd-windows-arm64.exe |
-            | FreeBSD | 386 | afd-freebsd-386 |
-            | FreeBSD | amd64 | afd-freebsd-amd64 |
-            | FreeBSD | arm | afd-freebsd-arm |
-            | FreeBSD | arm64 | afd-freebsd-arm64 |
-            | OpenBSD | 386 | afd-openbsd-386 |
-            | OpenBSD | amd64 | afd-openbsd-amd64 |
-            | OpenBSD | arm | afd-openbsd-arm |
-            | OpenBSD | arm64 | afd-openbsd-arm64 |
-            | NetBSD | 386 | afd-netbsd-386 |
-            | NetBSD | amd64 | afd-netbsd-amd64 |
-            | NetBSD | arm | afd-netbsd-arm |
-            | NetBSD | arm64 | afd-netbsd-arm64 |
-            | DragonFly | amd64 | afd-dragonfly-amd64 |
-            | Solaris | amd64 | afd-solaris-amd64 |
-
-            ### Quick Install
-
-            ```bash
-            # Linux/macOS
-            curl -sL https://github.com/nexus-dl/afd/releases/download/${{ github.ref_name }}/afd-linux-amd64 -o afd
-            chmod +x afd
-
-            # Windows
-            # Download afd-windows-amd64.exe from releases
-            ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
