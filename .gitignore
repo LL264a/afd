@@ -1,0 +1,55 @@
+# Build artifacts
+/bin/
+/nexus-dl
+/nexus-dl.exe
+/nexus-dl-linux
+/nexus-dl-darwin
+/nexus-dl-windows*
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+*.cover
+*.coverprofile
+coverage.txt
+coverage.html
+
+# Runtime / data
+/data/
+/downloads/
+/torrents/
+/bt-data/
+/logs/
+*.log
+*.pid
+
+# Config secrets
+config.local.yaml
+config.local.json
+*.env
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Go
+/vendor/
+
+# Test caches
+.cache/
+tmp/
