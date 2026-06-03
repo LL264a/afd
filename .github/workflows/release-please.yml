@@ -7,7 +7,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  id-token: write
 
 jobs:
   release-please:
@@ -18,15 +17,5 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           release-type: go
-          package-name: nexus-dl
+          package-name: afd
           changelog-path: CHANGELOG.md
-          version-strategy: default
-          include-component-in-tag: false
-
-  publish-binaries:
-    needs: release-please
-    if: ${{ steps.release.outputs.release_created }}
-    uses: ./.github/workflows/release.yml
-    with:
-      tag: ${{ steps.release.outputs.tag_name }}
-    secrets: inherit
