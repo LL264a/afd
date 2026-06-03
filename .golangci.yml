@@ -1,0 +1,72 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck       # unchecked errors
+    - gosimple       # simplifications
+    - govet          # go vet
+    - ineffassign    # unused assignments
+    - staticcheck    # comprehensive static analysis
+    - typecheck      # type errors
+    - unused         # unused code
+    - gofmt          # formatting
+    - goimports      # import grouping
+    - misspell       # common misspellings (English)
+    - gocritic       # opinionated checks
+    - revive         # replacement for golint
+    - bodyclose      # http body close
+    - errorlint      # error wrapping
+    - gocyclo        # cyclomatic complexity
+    - dupl           # duplicate code
+    - prealloc       # slice preallocation
+    - sqlclosecheck  # sql.Rows / sql.Stmt close
+    - unconvert      # redundant conversions
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+  dupl:
+    threshold: 100
+  gocritic:
+    enabled-tags: [diagnostic, performance, style]
+    disabled-tags: [experimental]
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes: github.com/nexus-dl/nexus-dl
+  revive:
+    rules:
+      - name: var-naming
+      - name: package-comments
+      - name: exported
+      - name: error-strings
+      - name: error-return
+      - name: error-naming
+      - name: var-declaration
+      - name: receiver-naming
+      - name: indent-error-flow
+      - name: superfluous-else
+  misspell:
+    locale: US
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    - path: _test\.go
+      linters: [gocyclo, dupl, errcheck, gosimple, gocritic]
+    - path: cmd/nexus-dl/main\.go
+      linters: [gocyclo]
+    - linters: [gocritic]
+      text: "ifElseChain:"
+    - linters: [gocritic]
+      text: "hugeParam:"
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
