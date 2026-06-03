@@ -1,0 +1,100 @@
+groups:
+  - name: nexus-dl.rules
+    interval: 30s
+    rules:
+      # A node has been unreachable for too long.
+      - alert: NexusDLNodeOffline
+        expr: up{job="nexus-dl"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "NexusDL node {{ $labels.instance }} is offline"
+          description: |
+            The Prometheus scrape for {{ $labels.instance }} has been failing
+            for more than 2 minutes. Check the node process, network, and
+            systemd logs (`journalctl -u nexus-dl -n 200`).
+
+      # Cluster membership shrank below the expected count.
+      - alert: NexusDLClusterDegraded
+        expr: sum(nexus_cluster_nodes_online) < on() group_left sum(nexus_cluster_nodes_expected)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Cluster is missing nodes"
+          description: |
+            Online node count ({{ $value }}) is below the expected count.
+            Check connectivity, UDP discovery port 50052, and gRPC port 50051.
+
+      # Task queue is growing — backpressure or stuck scheduler.
+      - alert: NexusDLBacklogGrowing
+        expr: |
+          deriv(nexus_tasks_total[10m]) > 5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Task backlog is growing on {{ $labels.instance }}"
+          description: |
+            New tasks are being added faster than they complete. Check
+            cluster load, network egress, and disk space.
+
+      # No active downloads but tasks are pending — scheduler may be stuck.
+      - alert: NexusDLSchedulerStalled
+        expr: |
+          sum(nexus_tasks_active) == 0
+            and
+          sum(nexus_tasks_total{status="pending"}) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scheduler is not dispatching pending tasks"
+          description: |
+            There are pending tasks but no active downloads. Investigate
+            the scheduler, the cluster's online nodes, and node load.
+
+      # A task has been downloading but speed has been zero for 5 minutes.
+      - alert: NexusDLTaskStalled
+        expr: |
+          nexus_download_speed_bytes == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Task {{ $labels.task_id }} stalled at 0 B/s"
+          description: |
+            A task has reported zero throughput for more than 5 minutes.
+            It may be stuck on a slow mirror or a broken chunk. Consider
+            pausing and resuming, or removing the task.
+
+      # High error rate.
+      - alert: NexusDLHighErrorRate
+        expr: |
+          sum(rate(nexus_http_requests_total{status=~"5.."}[5m]))
+            /
+          sum(rate(nexus_http_requests_total[5m]))
+            > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API 5xx error rate above 5%"
+          description: |
+            More than 5% of API responses in the last 5 minutes returned
+            5xx. Check API logs.
+
+      # Disk almost full on the data directory.
+      - alert: NexusDLDiskAlmostFull
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/var/lib/nexus-dl"} / node_filesystem_size_bytes{mountpoint="/var/lib/nexus-dl"})
+            < 0.1
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Data directory almost full on {{ $labels.instance }}"
+          description: |
+            Less than 10% free space on /var/lib/nexus-dl. Downloads will
+            start to fail. Free space or expand the volume.

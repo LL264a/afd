@@ -1,0 +1,79 @@
+name: nexus-dl
+
+x-node-common: &node-common
+  build:
+    context: .
+    args:
+      VERSION: ${VERSION:-dev}
+      COMMIT: ${COMMIT:-unknown}
+      BUILD_TIME: ${BUILD_TIME:-unknown}
+  image: nexus-dl:${VERSION:-latest}
+  restart: unless-stopped
+  volumes:
+    - nexus-data:/data
+  environment: &node-env
+    NEXUS_NODE_ID: ${NODE_ID:-node-1}
+    NEXUS_NODE_NAME: ${NODE_NAME:-nexus-node}
+    NEXUS_NODE_LOG_LEVEL: ${LOG_LEVEL:-info}
+    NEXUS_NODE_DATA_DIR: /data
+    NEXUS_API_HOST: 0.0.0.0
+    NEXUS_API_PORT: "8080"
+    NEXUS_API_AUTH_TOKEN: ${AUTH_TOKEN:-}
+    NEXUS_API_RATE_LIMIT: "100"
+    NEXUS_CLUSTER_GRPC_PORT: "50051"
+    NEXUS_CLUSTER_DISCOVERY_PORT: "50052"
+    NEXUS_CLUSTER_JOIN_PEERS: ${JOIN_PEERS:-}
+
+services:
+  node-1:
+    <<: *node-common
+    container_name: nexus-dl-1
+    hostname: node-1
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+      - "50052:50052/udp"
+    environment:
+      <<: *node-env
+      NEXUS_NODE_ID: node-1
+      NEXUS_CLUSTER_JOIN_PEERS: ${JOIN_PEERS:-}
+
+  node-2:
+    <<: *node-common
+    container_name: nexus-dl-2
+    hostname: node-2
+    depends_on:
+      - node-1
+    ports:
+      - "8081:8080"
+      - "50061:50051"
+      - "50062:50052/udp"
+    environment:
+      <<: *node-env
+      NEXUS_NODE_ID: node-2
+      NEXUS_API_PORT: "8080"
+      NEXUS_CLUSTER_GRPC_PORT: "50051"
+      NEXUS_CLUSTER_DISCOVERY_PORT: "50052"
+      NEXUS_CLUSTER_JOIN_PEERS: node-1:50052
+
+  node-3:
+    <<: *node-common
+    container_name: nexus-dl-3
+    hostname: node-3
+    depends_on:
+      - node-1
+    ports:
+      - "8082:8080"
+      - "50071:50051"
+      - "50072:50052/udp"
+    environment:
+      <<: *node-env
+      NEXUS_NODE_ID: node-3
+      NEXUS_API_PORT: "8080"
+      NEXUS_CLUSTER_GRPC_PORT: "50051"
+      NEXUS_CLUSTER_DISCOVERY_PORT: "50052"
+      NEXUS_CLUSTER_JOIN_PEERS: node-1:50052
+
+volumes:
+  nexus-data:
+    driver: local

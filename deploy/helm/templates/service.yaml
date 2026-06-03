@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nexus-dl.fullname" . }}
+  labels:
+    {{- include "nexus-dl.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: api
+      port: {{ .Values.service.api.port }}
+      targetPort: api
+      protocol: TCP
+    - name: grpc
+      port: {{ .Values.service.grpc.port }}
+      targetPort: grpc
+      protocol: TCP
+    - name: discovery
+      port: {{ .Values.service.discovery.port }}
+      targetPort: discovery
+      protocol: {{ .Values.service.discovery.protocol }}
+  selector:
+    {{- include "nexus-dl.selectorLabels" . | nindent 4 }}

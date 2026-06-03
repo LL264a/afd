@@ -1,0 +1,104 @@
+# Default values for nexus-dl.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/nexus-dl/nexus-dl
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  api:
+    port: 8080
+  grpc:
+    port: 50051
+  discovery:
+    port: 50052
+    protocol: UDP
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: nexus-dl.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# nodeSelector, tolerations, affinity — standard k8s shape
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+persistence:
+  enabled: true
+  size: 50Gi
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+
+# Authentication token. If empty, a random one is generated on first install.
+authToken: ""
+
+# Cluster bootstrap: list of seed peers in `host:port` (UDP discovery) form.
+cluster:
+  joinPeers: []
+  grpcPort: 50051
+  discoveryPort: 50052
+
+# Rate limit (HTTP requests/sec per IP). 0 = disable.
+rateLimit: 100
+
+# Log level: debug | info | warn | error
+logLevel: info
+
+# Service monitor for Prometheus Operator
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  path: /metrics
+  labels: {}
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1

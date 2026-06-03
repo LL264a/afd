@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nexus-dl.fullname" . }}
+  labels:
+    {{- include "nexus-dl.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.service.api.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "nexus-dl.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Force pod restart when configmap changes
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "nexus-dl.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "nexus-dl.fullname" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: nexus-dl
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: api
+              containerPort: 8080
+              protocol: TCP
+            - name: grpc
+              containerPort: 50051
+              protocol: TCP
+            - name: discovery
+              containerPort: 50052
+              protocol: UDP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: api
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: NEXUS_NODE_ID
+              value: {{ include "nexus-dl.fullname" . }}
+            - name: NEXUS_NODE_DATA_DIR
+              value: /data
+            - name: NEXUS_API_HOST
+              value: "0.0.0.0"
+            - name: NEXUS_API_PORT
+              value: "8080"
+            - name: NEXUS_API_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nexus-dl.fullname" . }}
+                  key: auth-token
+            - name: NEXUS_API_RATE_LIMIT
+              value: {{ .Values.rateLimit | quote }}
+            - name: NEXUS_CLUSTER_GRPC_PORT
+              value: {{ .Values.cluster.grpcPort | quote }}
+            - name: NEXUS_CLUSTER_DISCOVERY_PORT
+              value: {{ .Values.cluster.discoveryPort | quote }}
+            - name: NEXUS_CLUSTER_JOIN_PEERS
+              value: {{ join "," .Values.cluster.joinPeers }}
+            - name: NEXUS_NODE_LOG_LEVEL
+              value: {{ .Values.logLevel }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /etc/nexus-dl
+              readOnly: true
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "nexus-dl.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: config
+          configMap:
+            name: {{ include "nexus-dl.fullname" . }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

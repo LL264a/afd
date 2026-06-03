@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nexus-dl.fullname" . }}
+  labels:
+    {{- include "nexus-dl.labels" . | nindent 4 }}
+data:
+  config.yaml: |-
+    node:
+      id: {{ include "nexus-dl.fullname" . }}
+      name: {{ include "nexus-dl.fullname" . }}
+      log_level: {{ .Values.logLevel }}
+      data_dir: /data
+
+    api:
+      host: 0.0.0.0
+      port: 8080
+      auth_token: ""
+      rate_limit: {{ .Values.rateLimit }}
+      enable_cors: true
+
+    cluster:
+      grpc_port: {{ .Values.cluster.grpcPort }}
+      discovery_port: {{ .Values.cluster.discoveryPort }}
+      node_timeout: 30s
+      join_peers: {{ toJson .Values.cluster.joinPeers }}
+
+    download:
+      max_connections: 8
+      min_chunk_size: 1048576
+      max_chunk_size: 52428800
+      default_chunk_size: 10485760
+      buffer_size: 32768
+      timeout: 30s
+      retry_count: 3
+      speed_limit: 0

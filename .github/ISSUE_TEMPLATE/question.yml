@@ -1,0 +1,17 @@
+name: Question
+description: Ask a usage question or request clarification.
+title: "[question] "
+labels: ["question"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      validations:
+        required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: What have you tried so far?
+      placeholder: "I read the README, searched existing issues, and tried..."

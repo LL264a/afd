@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1.6
+FROM golang:1.22-alpine AS builder
+WORKDIR /src
+
+ENV CGO_ENABLED=0 \
+    GOOS=linux \
+    GO111MODULE=on
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+COPY . .
+
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build \
+      -trimpath \
+      -ldflags="-s -w -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME}" \
+      -o /out/nexus-dl \
+      ./cmd/nexus-dl
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tzdata
+WORKDIR /app
+
+COPY --from=builder /out/nexus-dl /usr/local/bin/nexus-dl
+COPY config.yaml /app/config.yaml
+
+RUN addgroup -S nexus && adduser -S nexus -G nexus && \
+    mkdir -p /data/downloads && chown -R nexus:nexus /data
+USER nexus
+
+ENV NEXUS_NODE_DATA_DIR=/data \
+    NEXUS_API_HOST=0.0.0.0
+
+EXPOSE 8080/tcp
+EXPOSE 50051/tcp
+EXPOSE 50052/udp
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -qO- http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["/usr/local/bin/nexus-dl"]
+CMD ["serve", "-c", "/app/config.yaml"]
