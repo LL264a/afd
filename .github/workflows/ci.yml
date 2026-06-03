@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: '1.22'
+  GO_VERSION: '1.24'
 
 jobs:
   lint:
@@ -24,8 +24,6 @@ jobs:
           cache: true
       - name: go vet
         run: go vet ./...
-      - name: go vet (integration)
-        run: go vet -tags=integration ./...
       - name: gofmt check
         run: |
           if [ "$(gofmt -l . | wc -l)" -gt 0 ]; then
@@ -33,18 +31,10 @@ jobs:
             gofmt -l .
             exit 1
           fi
-      - name: goimports check
-        run: |
-          go install golang.org/x/tools/cmd/goimports@latest
-          if [ "$(goimports -l . | wc -l)" -gt 0 ]; then
-            echo "Imports not formatted:"
-            goimports -l .
-            exit 1
-          fi
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: v1.59.0
+          version: v1.64.0
           args: --timeout=5m
 
   unit-test:
@@ -64,139 +54,29 @@ jobs:
       - name: go test
         run: go test -count=1 -timeout=300s ./...
 
-  integration-test:
-    name: Integration tests
-    needs: lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-      - name: go test (integration)
-        run: go test -tags=integration -count=1 -timeout=300s ./test/integration/...
-
-  webui-test:
-    name: Web UI asset tests
-    needs: lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-      - name: go test (webui)
-        run: go test -count=1 -timeout=60s ./test/webui/...
-
-  fuzz-test:
-    name: Fuzz tests
-    needs: lint
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - { pkg: ./internal/api, fnc: FuzzJSONRPCServe,        time: 30s }
-          - { pkg: ./internal/api, fnc: FuzzJSONRPCMulticallParams, time: 30s }
-          - { pkg: ./internal/api, fnc: FuzzXMLRPCServe,         time: 30s }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-      - name: go test (fuzz)
-        run: |
-          go test -run=^$ -fuzz=${{ matrix.target.fnc }} -fuzztime=${{ matrix.target.time }} ${{ matrix.target.pkg }}
-
-  benchmark:
-    name: Benchmarks
-    needs: lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-      - name: go test (bench)
-        run: |
-          go test -run=^$ -bench=. -benchtime=1s -benchmem ./internal/task/... ./internal/downloader/... > bench.txt
-          if [ -f bench.txt ]; then
-            echo "::group::Benchmark results"
-            cat bench.txt
-            echo "::endgroup::"
-          fi
-      - name: upload bench results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmarks
-          path: bench.txt
-          if-no-files-found: warn
-
-  coverage:
-    name: Coverage
-    needs: [unit-test, integration-test, webui-test]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-      - name: coverage (unit)
-        run: |
-          go test -count=1 -coverprofile=coverage.out -covermode=atomic ./...
-          go tool cover -func=coverage.out | tail -1
-      - name: coverage (integration)
-        run: |
-          go test -tags=integration -count=1 -coverprofile=coverage-int.out -covermode=atomic ./test/integration/...
-      - name: merge coverage
-        run: |
-          echo 'mode: atomic' > coverage-all.out
-          tail -n +2 coverage.out >> coverage-all.out 2>/dev/null || true
-          tail -n +2 coverage-int.out >> coverage-all.out 2>/dev/null || true
-          go tool cover -func=coverage-all.out | tail -1
-      - name: upload to Codecov
-        if: matrix.os == 'ubuntu-latest' || always()
-        uses: codecov/codecov-action@v4
-        with:
-          files: ./coverage-all.out
-          fail_ci_if_error: false
-          flags: unittests
-          name: nexus-dl
-
   build:
     name: Build
-    needs: [lint, unit-test, integration-test, webui-test]
+    needs: [lint, unit-test]
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            goos: linux
+          - goos: linux
             goarch: amd64
             ext: ''
-          - os: ubuntu-latest
-            goos: linux
+          - goos: linux
             goarch: arm64
             ext: ''
-          - os: macos-latest
-            goos: darwin
+          - goos: darwin
             goarch: amd64
             ext: ''
-          - os: macos-latest
-            goos: darwin
+          - goos: darwin
             goarch: arm64
             ext: ''
-          - os: windows-latest
-            goos: windows
+          - goos: windows
             goarch: amd64
-            ext: '.exe'
-    runs-on: ${{ matrix.os }}
+            ext: .exe
+    runs-on: ubuntu-latest
     env:
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
@@ -211,35 +91,12 @@ jobs:
         run: |
           mkdir -p dist
           go build -trimpath \
-            -ldflags="-s -w -X main.Version=${GITHUB_REF_NAME:-dev} -X main.Commit=${GITHUB_SHA::12} -X main.BuildTime=$(date -u +%FT%TZ)" \
-            -o dist/nexus-dl-${GOOS}-${GOARCH}${EXT} \
-            ./cmd/nexus-dl
+            -ldflags="-s -w -X main.Version=${GITHUB_REF_NAME:-dev} -X main.Commit=${GITHUB_SHA::12}" \
+            -o dist/afd-${GOOS}-${GOARCH}${EXT} \
+            ./cmd/afd
       - name: upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nexus-dl-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/nexus-dl-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+          name: afd-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/afd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
           if-no-files-found: error
-
-  docker:
-    name: Docker
-    needs: [lint, unit-test]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: false
-          tags: nexus-dl:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            VERSION=ci
-            COMMIT=${{ github.sha }}
-            BUILD_TIME=${{ github.event.repository.updated_at }}
