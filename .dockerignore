@@ -1,0 +1,13 @@
+.dockerignore
+.git
+.github
+*.md
+data/
+bin/
+*.exe
+*.test
+*.out
+coverage.*
+node_modules/
+.idea/
+.vscode/
