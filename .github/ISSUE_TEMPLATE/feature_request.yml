@@ -1,0 +1,64 @@
+name: Feature Request
+description: Propose a new feature or improvement.
+title: "[feat] "
+labels: ["enhancement", "triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to suggest a feature. For bugs, use the
+        **Bug Report** template.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What problem does this solve? Who is affected?
+      validations:
+        required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the API, CLI, or config change you have in mind.
+      validations:
+        required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other approaches did you weigh?
+
+  - type: textarea
+    id: example
+    attributes:
+      label: Example usage
+      description: How would a user invoke the new feature? Show CLI / API / config.
+      render: bash
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - core (engine, queue, store)
+        - api / rpc
+        - cluster
+        - web UI
+        - docs
+        - tooling (ci, deploy, build)
+        - other
+      validations:
+        required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues to avoid duplicates
+          required: true
+        - label: I am willing to submit a PR for this (best effort)
