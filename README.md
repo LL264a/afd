@@ -1,61 +1,63 @@
-# AFD - Auto Download Tool
+# AFD - 自动下载工具
 
-AFD is a distributed, cluster-aware download system, designed as a modern alternative to aria2.
+[English](./README_EN.md) | 中文
 
-## Features
+AFD 是一个分布式、集群感知的下载系统，可作为 aria2 的现代替代品。
 
-- **Multiple Protocols**: HTTP, HTTPS, FTP, BitTorrent, S3, WebDAV, SFTP
-- **High Performance**: Multi-threaded downloading, adaptive chunking
-- **Cluster Support**: Distributed download across multiple nodes
-- **Simple CLI**: aria2-like command line interface
+## 特性
 
-## Quick Start
+- **多协议支持**: HTTP, HTTPS, FTP, BitTorrent, S3, WebDAV, SFTP
+- **高性能**: 多线程下载，自适应分块
+- **集群支持**: 多节点分布式下载
+- **简洁 CLI**: 类似 aria2 的命令行界面
+
+## 快速开始
 
 ```bash
-# Direct download
+# 直接下载
 afd http://example.com/file.zip
 
-# Specify output file
+# 指定输出文件
 afd -o file.zip http://example.com/file.zip
 
-# Multi-threaded download
+# 多线程下载
 afd -s 4 http://example.com/file.zip
 
-# Speed limit
+# 速度限制
 afd --speed-limit 1M http://example.com/file.zip
 
-# Batch download
+# 批量下载
 afd -i urls.txt
 
-# Download to directory
+# 下载到目录
 afd -d /downloads -i urls.txt
 ```
 
-## Installation
+## 安装
 
-### One-line install (Linux/macOS)
+### 一键安装 (Linux/macOS)
 ```bash
 curl -sL https://raw.githubusercontent.com/nexus-dl/afd/main/install.sh | bash
 ```
 
-### Manual install
+### 手动安装
 ```bash
-# Install Go 1.25+
+# 安装 Go 1.25+
 wget https://go.dev/dl/go1.25.0.linux-amd64.tar.gz
 sudo tar -C /usr/local -xzf go1.25.0.linux-amd64.tar.gz
 
-# Build
+# 编译
 git clone https://github.com/nexus-dl/afd.git
 cd afd
 go build -o afd ./cmd/afd
 
-# Install
+# 安装
 sudo mv afd /usr/local/bin/
 ```
 
-## Configuration
+## 配置
 
-Default config location: `~/.afd/config.yaml`
+默认配置位置: `~/.afd/config.yaml`
 
 ```yaml
 node:
@@ -78,9 +80,9 @@ download:
   timeout: 300
 ```
 
-## Batch Download Format
+## 批量下载格式
 
-Create a text file with URLs (one per line):
+创建包含 URL 的文本文件（每行一个）:
 
 ```
 http://example.com/file1.zip
@@ -90,6 +92,17 @@ out=custom.zip
 http://example.com/file3.zip
 ```
 
-## License
+## 命令行选项
+
+| 选项 | 说明 |
+|------|------|
+| `-o, --output` | 输出文件路径 |
+| `-s, --split` | 下载线程数 |
+| `-d, --dir` | 下载保存目录 |
+| `-i, --input-file` | 批量下载文件 |
+| `--speed-limit` | 速度限制 (如 1M, 500K) |
+| `--timeout` | 超时时间 (秒) |
+
+## 许可证
 
 MIT License
