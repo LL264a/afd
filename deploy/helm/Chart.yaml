@@ -1,0 +1,21 @@
+apiVersion: v2
+name: nexus-dl
+description: A distributed, cluster-aware multi-protocol download system.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+icon: https://raw.githubusercontent.com/nexus-dl/nexus-dl/main/web/favicon.ico
+home: https://github.com/nexus-dl/nexus-dl
+sources:
+  - https://github.com/nexus-dl/nexus-dl
+keywords:
+  - download
+  - aria2
+  - cluster
+  - bittorrent
+maintainers:
+  - name: NexusDL Maintainers
+    email: maintainers@nexus-dl.example.com
+annotations:
+  category: Network
+  licenses: MIT
