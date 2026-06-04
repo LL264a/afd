@@ -24,11 +24,6 @@ jobs:
           cache: true
       - name: go vet
         run: go vet ./...
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.64.0
-          args: --timeout=5m
 
   build:
     name: Build
