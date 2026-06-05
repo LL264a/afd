@@ -61,9 +61,6 @@ jobs:
           - goos: freebsd
             goarch: amd64
             ext: ''
-          - goos: netbsd
-            goarch: amd64
-            ext: ''
     runs-on: ubuntu-latest
     env:
       GOOS: ${{ matrix.goos }}
