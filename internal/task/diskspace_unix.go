@@ -1,4 +1,4 @@
-//go:build (linux || darwin || freebsd || openbsd || netbsd) && !js
+//go:build (linux || darwin || freebsd || openbsd) && !js
 
 package task
 
