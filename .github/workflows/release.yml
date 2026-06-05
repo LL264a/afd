@@ -61,24 +61,9 @@ jobs:
           - goos: freebsd
             goarch: amd64
             ext: ''
-          - goos: freebsd
-            goarch: arm64
-            ext: ''
-          - goos: openbsd
-            goarch: amd64
-            ext: ''
           - goos: netbsd
             goarch: amd64
             ext: ''
-          - goos: solaris
-            goarch: amd64
-            ext: ''
-          - goos: illumos
-            goarch: amd64
-            ext: ''
-          - goos: js
-            goarch: wasm
-            ext: .wasm
     runs-on: ubuntu-latest
     env:
       GOOS: ${{ matrix.goos }}
@@ -114,6 +99,7 @@ jobs:
   release:
     name: Create GitHub Release
     needs: build
+    if: always()
     runs-on: ubuntu-latest
     permissions:
       contents: write
