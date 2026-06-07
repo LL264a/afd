@@ -119,7 +119,6 @@ func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downl
 	}
 
 	client := &http.Client{
-		Timeout:   cfg.Timeout,
 		Jar:       jar,
 		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
