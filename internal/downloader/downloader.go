@@ -104,13 +104,14 @@ func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downl
 		MaxConnsPerHost:       maxConnsPerHost,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		ForceAttemptHTTP2:      true,
+		// 禁用 HTTP/2 强制以避免某些服务器对 Range 请求处理问题
+		ForceAttemptHTTP2:      false,
 		DisableCompression:     false,
 		DisableKeepAlives:      false,
 		ReadBufferSize:         32 * 1024,
@@ -705,16 +706,33 @@ func (d *Downloader) downloadChunkOnce(ctx context.Context, file *os.File, chunk
 func (d *Downloader) downloadChunkOnceFromURL(ctx context.Context, file *os.File, chunk *Chunk, downloadURL string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("create request: %w", err)
 	}
 
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", chunk.Start, chunk.End))
 
+	d.logger.Debugw("starting chunk request",
+		"url", downloadURL,
+		"range", fmt.Sprintf("bytes=%d-%d", chunk.Start, chunk.End),
+		"chunk_size", chunk.Size(),
+	)
+
 	resp, err := d.client.Do(req)
 	if err != nil {
-		return err
+		d.logger.Warnw("chunk request failed",
+			"error", err,
+			"url", downloadURL,
+			"range", fmt.Sprintf("bytes=%d-%d", chunk.Start, chunk.End),
+		)
+		return fmt.Errorf("request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	d.logger.Debugw("chunk response received",
+		"status", resp.StatusCode,
+		"content_length", resp.ContentLength,
+		"content_range", resp.Header.Get("Content-Range"),
+	)
 
 	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
 		return fmt.Errorf("server does not support range requests (416)")
@@ -725,46 +743,67 @@ func (d *Downloader) downloadChunkOnceFromURL(ctx context.Context, file *os.File
 	}
 
 	buf := make([]byte, d.cfg.BufferSize)
+	bytesRead := int64(0)
 
 	for {
+		// 在检查 ctx.Done() 之前先读取一些数据
+		readChan := make(chan readResult, 1)
+		go func() {
+			n, err := resp.Body.Read(buf)
+			readChan <- readResult{n, err}
+		}()
+
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
+			d.logger.Warnw("chunk download cancelled",
+				"bytes_read", bytesRead,
+				"chunk_start", chunk.Start,
+				"chunk_end", chunk.End,
+			)
+			return fmt.Errorf("cancelled: %w", ctx.Err())
+		case rr := <-readChan:
+			n, readErr := rr.n, rr.err
+			if n > 0 {
+				bytesRead += int64(n)
+				if d.rateLimiter != nil {
+					if err := d.rateLimiter.Wait(ctx, int64(n)); err != nil {
+						return fmt.Errorf("rate limit: %w", err)
+					}
+				}
 
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			if d.rateLimiter != nil {
-				if err := d.rateLimiter.Wait(ctx, int64(n)); err != nil {
-					return err
+				writeOffset := chunk.Start + chunk.Downloaded
+				_, writeErr := file.WriteAt(buf[:n], writeOffset)
+				if writeErr != nil {
+					return fmt.Errorf("write chunk: %w", writeErr)
+				}
+
+				chunk.Downloaded += int64(n)
+				atomic.AddInt64(&d.totalDownloaded, int64(n))
+				d.recordSpeed(int64(n))
+
+				if d.shouldSaveProgress(int64(n)) {
+					d.SaveProgress()
 				}
 			}
 
-			writeOffset := chunk.Start + chunk.Downloaded
-			_, writeErr := file.WriteAt(buf[:n], writeOffset)
-			if writeErr != nil {
-				return fmt.Errorf("write chunk: %w", writeErr)
+			if readErr != nil {
+				if readErr == io.EOF {
+					d.logger.Debugw("chunk download completed",
+						"bytes_read", bytesRead,
+						"chunk_start", chunk.Start,
+						"chunk_end", chunk.End,
+					)
+					return nil
+				}
+				return fmt.Errorf("read chunk: %w", readErr)
 			}
-
-			chunk.Downloaded += int64(n)
-			atomic.AddInt64(&d.totalDownloaded, int64(n))
-			d.recordSpeed(int64(n))
-
-			if d.shouldSaveProgress(int64(n)) {
-				d.SaveProgress()
-			}
-		}
-
-		if readErr != nil {
-			if readErr == io.EOF {
-				break
-			}
-			return fmt.Errorf("read chunk: %w", readErr)
 		}
 	}
+}
 
-	return nil
+type readResult struct {
+	n   int
+	err error
 }
 
 func (d *Downloader) recordSpeed(bytes int64) {
