@@ -121,11 +121,11 @@ func (ac *adaptiveController) setThreadCount(n int32) {
 	atomic.StoreInt32(&ac.activeThreads, n)
 }
 
-func (ac *adaptiveController) shouldAdjust() bool {
+func (ac *adaptiveController) shouldAdjust() (adjusted bool, newThreads int32) {
 	ac.mu.Lock()
 	if time.Since(ac.lastAdjustTime) < ac.adjustInterval {
 		ac.mu.Unlock()
-		return false
+		return false, 0
 	}
 
 	currentBytes := atomic.LoadInt64(&ac.totalBytes)
@@ -145,19 +145,19 @@ func (ac *adaptiveController) shouldAdjust() bool {
 	current := atomic.LoadInt32(&ac.activeThreads)
 
 	if intervalSpeed < ac.speedThresholdLow && current < ac.maxThreads {
-		ac.incrementThreads()
-		return true
+		newT := ac.incrementThreads()
+		return true, newT
 	}
 
 	if current > ac.minThreads {
 		probeSpeed := int64(float64(intervalSpeed) / float64(current) * float64(current+1) * ac.speedImproveRatio)
 		if probeSpeed < intervalSpeed {
-			ac.decrementThreads()
-			return true
+			newT := ac.decrementThreads()
+			return true, newT
 		}
 	}
 
-	return false
+	return false, current
 }
 
 func (ac *adaptiveController) reset() {

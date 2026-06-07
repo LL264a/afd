@@ -120,6 +120,7 @@ type DownloadConfig struct {
 	MaxPerServerConn    int                  `json:"max_per_server_conn" yaml:"max_per_server_conn"`
 	ScheduleSpeedLimits []ScheduleSpeedLimit `json:"schedule_speed_limits,omitempty" yaml:"schedule_speed_limits,omitempty"`
 	UseDigestAuth       bool                 `json:"use_digest_auth" yaml:"use_digest_auth"`
+	Adaptive            bool                 `json:"adaptive" yaml:"adaptive"`
 }
 
 func (c *DownloadConfig) Validate() error {
@@ -298,6 +299,7 @@ func DefaultDownloadConfig() *DownloadConfig {
 		MaxPerServerConn:    0,
 		ScheduleSpeedLimits: []ScheduleSpeedLimit{},
 		UseDigestAuth:       false,
+		Adaptive:            false,
 	}
 }
 

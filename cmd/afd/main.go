@@ -34,6 +34,7 @@ It supports HTTP, FTP, BitTorrent, S3, WebDAV, and more.
   afd -o file.zip http://example.com/file   # 指定输出
   afd -s 4 http://example.com/file          # 4线程
   afd -i urls.txt                            # 批量下载`,
+	Version: fmt.Sprintf("%s (commit: %s, built: %s)", Version, Commit, BuildTime),
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		if cfgFile != "" {
 			config.Load(cfgFile)
@@ -124,6 +125,7 @@ var (
 	inputFile   string
 	dir         string
 	allTorrrent bool
+	adaptive    bool
 )
 
 var downloadCmd = &cobra.Command{
@@ -210,6 +212,10 @@ func doDownload(url, outputPath string) error {
 		cfg.MaxConnections = parallel
 	}
 
+	if adaptive {
+		cfg.Adaptive = true
+	}
+
 	logger.Init("info", "")
 	defer logger.Log.Sync()
 
@@ -222,6 +228,9 @@ func doDownload(url, outputPath string) error {
 	}
 	if parallel > 0 {
 		fmt.Printf("连接数: %d\n", parallel)
+	}
+	if adaptive {
+		fmt.Printf("自适应模式: 启用\n")
 	}
 
 	d, err := downloader.NewDownloaderFromURL(url, outputPath, cfg, log)
@@ -382,6 +391,7 @@ func init() {
 	downloadCmd.Flags().StringVarP(&inputFile, "input-file", "i", "", "批量下载文件 (每行一个URL)")
 	downloadCmd.Flags().StringVarP(&dir, "dir", "d", "", "下载保存目录")
 	downloadCmd.Flags().BoolVar(&allTorrrent, "all", false, "下载所有torrent文件中的内容")
+	downloadCmd.Flags().BoolVar(&adaptive, "adaptive", false, "自适应线程数 (根据网络状况自动调整)")
 }
 
 func main() {

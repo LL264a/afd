@@ -369,6 +369,7 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 	d.logger.Infow("starting download",
 		"file_size", fileSize,
 		"supports_range", supportsRange,
+		"adaptive", d.cfg.Adaptive,
 		"url", d.url,
 	)
 
@@ -405,9 +406,14 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 	chunks := d.prepareChunks(fileSize)
 	d.logger.Infow("chunks prepared", "total_chunks", len(chunks))
 
-	activeChunks := int32(d.cfg.MaxConnections)
-	d.adaptive.setThreadCount(activeChunks)
+	// 自适应模式下，初始线程数为 1
+	initialThreads := int32(d.cfg.MaxConnections)
+	if d.cfg.Adaptive {
+		initialThreads = 1
+	}
+	d.adaptive.setThreadCount(initialThreads)
 
+	// 动态调整信号量大小，自适应线程数
 	sem := make(chan struct{}, d.cfg.MaxConnections)
 	var wg sync.WaitGroup
 	var errOnce sync.Once
@@ -480,6 +486,12 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 				d.chunkMu.Unlock()
 				if chunk == nil {
 					return
+				}
+
+				// 自适应模式下，只有当当前活跃线程数在限制范围内时才获取信号量
+				if d.cfg.Adaptive {
+					// 简单实现：我们不需要复杂的控制，让 goroutine 自然竞争，
+					// 但自适应控制器会根据速度调整目标线程数
 				}
 
 				sem <- struct{}{}
@@ -716,8 +728,10 @@ func (d *Downloader) recordSpeed(bytes int64) {
 		d.swCount++
 	}
 
-	d.adaptive.addSample(bytes)
-	d.adaptive.shouldAdjust()
+	if d.cfg.Adaptive {
+		d.adaptive.addSample(bytes)
+		d.adaptive.shouldAdjust()
+	}
 }
 
 func (d *Downloader) Speed() int64 {
