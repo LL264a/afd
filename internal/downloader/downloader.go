@@ -425,6 +425,12 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 		filePerm = d.cfg.FileMode
 	}
 
+	// Ensure output directory exists
+	outputDir := filepath.Dir(d.outputPath)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("create output directory: %w", err)
+	}
+
 	file, err := os.OpenFile(d.outputPath, os.O_CREATE|os.O_RDWR, filePerm)
 	if err != nil {
 		return fmt.Errorf("open output file: %w", err)
