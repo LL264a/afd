@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -558,6 +559,7 @@ func (d *Downloader) periodicSaveProgress(ctx context.Context) {
 }
 
 func (d *Downloader) headRequest(ctx context.Context) (int64, bool, error) {
+	// Try HEAD first
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, d.url, nil)
 	if err != nil {
 		return 0, false, fmt.Errorf("create head request: %w", err)
@@ -565,18 +567,63 @@ func (d *Downloader) headRequest(ctx context.Context) (int64, bool, error) {
 
 	resp, err := d.client.Do(req)
 	if err != nil {
-		return 0, false, fmt.Errorf("head request failed: %w", err)
+		d.logger.Warnw("HEAD request failed, falling back to GET", "error", err)
+		return d.getSizeViaGet(ctx)
 	}
 	defer resp.Body.Close()
 
+	// Some servers don't support HEAD (return 405 or other errors)
 	if resp.StatusCode != http.StatusOK {
-		return 0, false, fmt.Errorf("head request returned status: %d", resp.StatusCode)
+		d.logger.Warnw("HEAD request returned non-200, falling back to GET", "status", resp.StatusCode)
+		return d.getSizeViaGet(ctx)
 	}
 
 	supportsRange := resp.Header.Get("Accept-Ranges") == "bytes"
 	fileSize := resp.ContentLength
 
 	return fileSize, supportsRange, nil
+}
+
+// getSizeViaGet uses a GET request with Range header to probe file size and range support.
+// It only reads the first byte then aborts, minimizing bandwidth usage.
+func (d *Downloader) getSizeViaGet(ctx context.Context) (int64, bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.url, nil)
+	if err != nil {
+		return 0, false, fmt.Errorf("create get request: %w", err)
+	}
+	// Request only the first byte to probe
+	req.Header.Set("Range", "bytes=0-0")
+
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return 0, false, fmt.Errorf("get request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	// Drain and discard the body to reuse the connection
+	io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode == http.StatusPartialContent {
+		// Server supports Range; parse Content-Range header for total size
+		// Content-Range: bytes 0-0/<total>
+		contentRange := resp.Header.Get("Content-Range")
+		if contentRange != "" {
+			parts := strings.Split(contentRange, "/")
+			if len(parts) == 2 {
+				if total, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+					return total, true, nil
+				}
+			}
+		}
+		// Fallback: use Content-Length + 1 (we got 1 byte)
+		return resp.ContentLength + 1, true, nil
+	}
+
+	if resp.StatusCode == http.StatusOK {
+		// Server doesn't support Range
+		return resp.ContentLength, false, nil
+	}
+
+	return 0, false, fmt.Errorf("get request returned status: %d", resp.StatusCode)
 }
 
 func (d *Downloader) prepareChunks(fileSize int64) []*Chunk {
