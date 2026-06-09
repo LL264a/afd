@@ -121,6 +121,7 @@ type DownloadConfig struct {
 	ScheduleSpeedLimits []ScheduleSpeedLimit `json:"schedule_speed_limits,omitempty" yaml:"schedule_speed_limits,omitempty"`
 	UseDigestAuth       bool                 `json:"use_digest_auth" yaml:"use_digest_auth"`
 	Adaptive            bool                 `json:"adaptive" yaml:"adaptive"`
+	Insecure            bool                 `json:"insecure" yaml:"insecure"`
 }
 
 func (c *DownloadConfig) Validate() error {
@@ -300,6 +301,7 @@ func DefaultDownloadConfig() *DownloadConfig {
 		ScheduleSpeedLimits: []ScheduleSpeedLimit{},
 		UseDigestAuth:       false,
 		Adaptive:            false,
+		Insecure:            false,
 	}
 }
 
@@ -317,12 +319,6 @@ func DefaultConfig() *Config {
 			AuthToken:  "",
 			RateLimit:  100,
 			EnableCORS: true,
-			// Allow the standalone UI's typical dev / prod origins by
-			// default; override in production via NEXUS_API_CORS_ALLOWED_ORIGINS
-			// or the config file.  An empty / unset value still allows
-			// the wildcard for backward compatibility, but the moment
-			// a non-empty list is supplied the wildcard is dropped
-			// (see internal/api/middleware.go CORS).
 			CORSAllowedOrigins: []string{
 				"http://localhost:5173",
 				"http://127.0.0.1:5173",
@@ -342,11 +338,6 @@ func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
 	loadedPaths := make(map[string]bool) // 防止循环 include
 
-	// When no explicit path is supplied, try NEXUS_CONFIG_FILE,
-	// then the conventional locations, before giving up.  This
-	// mirrors the precedence documented in README and keeps
-	// config-reload working in production deployments where the
-	// config path was supplied through the environment.
 	if path == "" {
 		path = os.Getenv("NEXUS_CONFIG_FILE")
 	}
@@ -379,7 +370,6 @@ func loadConfigFile(path string, cfg *Config, loadedPaths map[string]bool) error
 		return fmt.Errorf("invalid config path: %w", err)
 	}
 
-	// 防止循环 include
 	if loadedPaths[absPath] {
 		return fmt.Errorf("circular include detected: %s", absPath)
 	}
@@ -390,16 +380,13 @@ func loadConfigFile(path string, cfg *Config, loadedPaths map[string]bool) error
 		return fmt.Errorf("failed to read config file %s: %w", absPath, err)
 	}
 
-	// 先解析到临时配置，获取 include 列表
 	tempCfg := DefaultConfig()
 	if err := parseConfig(data, filepath.Ext(absPath), tempCfg); err != nil {
 		return fmt.Errorf("failed to parse config file %s: %w", absPath, err)
 	}
 
-	// 先加载 include 的配置（优先级更低）
 	baseDir := filepath.Dir(absPath)
 	for _, includePath := range tempCfg.Download.IncludeConfig {
-		// 相对路径转换为绝对路径
 		includeAbsPath := includePath
 		if !filepath.IsAbs(includePath) {
 			includeAbsPath = filepath.Join(baseDir, includePath)
@@ -409,7 +396,6 @@ func loadConfigFile(path string, cfg *Config, loadedPaths map[string]bool) error
 		}
 	}
 
-	// 再合并当前配置（优先级更高）
 	if err := parseConfig(data, filepath.Ext(absPath), cfg); err != nil {
 		return fmt.Errorf("failed to parse config file %s: %w", absPath, err)
 	}

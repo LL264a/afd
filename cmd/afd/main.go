@@ -126,6 +126,7 @@ var (
 	dir         string
 	allTorrrent bool
 	adaptive    bool
+	insecure    bool
 )
 
 var downloadCmd = &cobra.Command{
@@ -216,6 +217,10 @@ func doDownload(url, outputPath string) error {
 		cfg.Adaptive = true
 	}
 
+	if insecure {
+		cfg.Insecure = true
+	}
+
 	logger.Init("info", "")
 	defer logger.Log.Sync()
 
@@ -231,6 +236,9 @@ func doDownload(url, outputPath string) error {
 	}
 	if adaptive {
 		fmt.Printf("自适应模式: 启用\n")
+	}
+	if insecure {
+		fmt.Printf("跳过TLS验证: 启用\n")
 	}
 
 	d, err := downloader.NewDownloaderFromURL(url, outputPath, cfg, log)
@@ -392,6 +400,7 @@ func init() {
 	downloadCmd.Flags().StringVarP(&dir, "dir", "d", "", "下载保存目录")
 	downloadCmd.Flags().BoolVar(&allTorrrent, "all", false, "下载所有torrent文件中的内容")
 	downloadCmd.Flags().BoolVar(&adaptive, "adaptive", false, "自适应线程数 (根据网络状况自动调整)")
+	downloadCmd.Flags().BoolVarP(&insecure, "insecure", "k", false, "跳过TLS证书验证")
 }
 
 func main() {
