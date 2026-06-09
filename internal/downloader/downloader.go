@@ -119,6 +119,7 @@ func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downl
 		MaxResponseHeaderBytes: 256 * 1024,
 	}
 
+	// 跳过 TLS 证书验证
 	if cfg.Insecure {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
