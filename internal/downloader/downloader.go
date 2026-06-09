@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha1"
+	"crypto/tls"
 	"encoding/gob"
 	"fmt"
 	"io"
@@ -110,13 +111,16 @@ func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downl
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		// 禁用 HTTP/2 强制以避免某些服务器对 Range 请求处理问题
 		ForceAttemptHTTP2:      false,
 		DisableCompression:     false,
 		DisableKeepAlives:      false,
 		ReadBufferSize:         32 * 1024,
 		WriteBufferSize:        32 * 1024,
 		MaxResponseHeaderBytes: 256 * 1024,
+	}
+
+	if cfg.Insecure {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 
 	client := &http.Client{
@@ -208,7 +212,6 @@ func NewDownloaderFromURL(url, outputPath string, cfg *config.DownloadConfig, lo
 		return NewWebDAVDownloader(url, outputPath, cfg, logger)
 	}
 	if IsTorrentFile(url) || IsMagnetLink(url) {
-		// 使用完整的 BT 配置
 		btCfg := &BTConfig{
 			Enabled:            true,
 			DownloadSpeedLimit: 0,
@@ -371,6 +374,7 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 		"file_size", fileSize,
 		"supports_range", supportsRange,
 		"adaptive", d.cfg.Adaptive,
+		"insecure", d.cfg.Insecure,
 		"url", d.url,
 	)
 
@@ -407,14 +411,12 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 	chunks := d.prepareChunks(fileSize)
 	d.logger.Infow("chunks prepared", "total_chunks", len(chunks))
 
-	// 自适应模式下，初始线程数为 1
 	initialThreads := int32(d.cfg.MaxConnections)
 	if d.cfg.Adaptive {
 		initialThreads = 1
 	}
 	d.adaptive.setThreadCount(initialThreads)
 
-	// 动态调整信号量大小，自适应线程数
 	sem := make(chan struct{}, d.cfg.MaxConnections)
 	var wg sync.WaitGroup
 	var errOnce sync.Once
@@ -425,7 +427,6 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 		filePerm = d.cfg.FileMode
 	}
 
-	// Ensure output directory exists
 	outputDir := filepath.Dir(d.outputPath)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
@@ -444,7 +445,6 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 
 	if existingSize < fileSize {
 		if d.cfg.PreallocateSpace {
-			// 预分配磁盘空间
 			if err := preallocateFile(file, fileSize, d.cfg.SparseFile); err != nil {
 				d.logger.Warnw("failed to preallocate space, falling back to truncate", "error", err)
 				if err := file.Truncate(fileSize); err != nil {
@@ -458,7 +458,6 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 		}
 	}
 
-	// 确保文件权限正确
 	if d.cfg.FileMode != 0 {
 		if err := os.Chmod(d.outputPath, d.cfg.FileMode); err != nil {
 			d.logger.Warnw("failed to set file permissions", "error", err)
@@ -493,12 +492,6 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 				d.chunkMu.Unlock()
 				if chunk == nil {
 					return
-				}
-
-				// 自适应模式下，只有当当前活跃线程数在限制范围内时才获取信号量
-				if d.cfg.Adaptive {
-					// 简单实现：我们不需要复杂的控制，让 goroutine 自然竞争，
-					// 但自适应控制器会根据速度调整目标线程数
 				}
 
 				sem <- struct{}{}
@@ -565,7 +558,6 @@ func (d *Downloader) periodicSaveProgress(ctx context.Context) {
 }
 
 func (d *Downloader) headRequest(ctx context.Context) (int64, bool, error) {
-	// Try HEAD first
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, d.url, nil)
 	if err != nil {
 		return 0, false, fmt.Errorf("create head request: %w", err)
@@ -578,7 +570,6 @@ func (d *Downloader) headRequest(ctx context.Context) (int64, bool, error) {
 	}
 	defer resp.Body.Close()
 
-	// Some servers don't support HEAD (return 405 or other errors)
 	if resp.StatusCode != http.StatusOK {
 		d.logger.Warnw("HEAD request returned non-200, falling back to GET", "status", resp.StatusCode)
 		return d.getSizeViaGet(ctx)
@@ -590,14 +581,11 @@ func (d *Downloader) headRequest(ctx context.Context) (int64, bool, error) {
 	return fileSize, supportsRange, nil
 }
 
-// getSizeViaGet uses a GET request with Range header to probe file size and range support.
-// It only reads the first byte then aborts, minimizing bandwidth usage.
 func (d *Downloader) getSizeViaGet(ctx context.Context) (int64, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.url, nil)
 	if err != nil {
 		return 0, false, fmt.Errorf("create get request: %w", err)
 	}
-	// Request only the first byte to probe
 	req.Header.Set("Range", "bytes=0-0")
 
 	resp, err := d.client.Do(req)
@@ -605,12 +593,9 @@ func (d *Downloader) getSizeViaGet(ctx context.Context) (int64, bool, error) {
 		return 0, false, fmt.Errorf("get request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	// Drain and discard the body to reuse the connection
 	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode == http.StatusPartialContent {
-		// Server supports Range; parse Content-Range header for total size
-		// Content-Range: bytes 0-0/<total>
 		contentRange := resp.Header.Get("Content-Range")
 		if contentRange != "" {
 			parts := strings.Split(contentRange, "/")
@@ -620,12 +605,10 @@ func (d *Downloader) getSizeViaGet(ctx context.Context) (int64, bool, error) {
 				}
 			}
 		}
-		// Fallback: use Content-Length + 1 (we got 1 byte)
 		return resp.ContentLength + 1, true, nil
 	}
 
 	if resp.StatusCode == http.StatusOK {
-		// Server doesn't support Range
 		return resp.ContentLength, false, nil
 	}
 
@@ -643,12 +626,6 @@ func (d *Downloader) prepareChunks(fileSize int64) []*Chunk {
 				chunk.Downloaded = chunk.Size()
 				atomic.AddInt64(&d.totalDownloaded, chunk.Size())
 			} else if stat.Size() > chunk.Start {
-				// Bytes between the original chunk.Start and stat.Size()
-				// are already on disk.  Record them as progress but
-				// reset chunk.Downloaded to 0 because downloadChunkOnce
-				// uses writeOffset = chunk.Start + chunk.Downloaded —
-				// leaving the old value would write at the wrong offset
-				// and corrupt the output file.
 				alreadyDownloaded := stat.Size() - chunk.Start
 				atomic.AddInt64(&d.totalDownloaded, alreadyDownloaded)
 				chunk.Start = stat.Size()
@@ -746,7 +723,6 @@ func (d *Downloader) downloadChunkOnceFromURL(ctx context.Context, file *os.File
 	bytesRead := int64(0)
 
 	for {
-		// 在检查 ctx.Done() 之前先读取一些数据
 		readChan := make(chan readResult, 1)
 		go func() {
 			n, err := resp.Body.Read(buf)
@@ -944,8 +920,6 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 	if resp.ContentLength > 0 {
 		d.fileSize = existingSize + resp.ContentLength
 	}
-	// totalDownloaded was incremented per-read above; for a fresh
-	// download existingSize is 0, so the value is already correct.
 	d.SaveProgress()
 	return nil
 }
@@ -1131,6 +1105,15 @@ func (d *Downloader) GetAltURLs() []string {
 	return d.altURLs
 }
 
+func (d *Downloader) SetInsecure(insecure bool) {
+	d.cfg.Insecure = insecure
+	if insecure {
+		if transport, ok := d.client.Transport.(*http.Transport); ok {
+			transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		}
+	}
+}
+
 type DiskCache struct {
 	cacheDir string
 	maxSize  int64
@@ -1139,7 +1122,6 @@ type DiskCache struct {
 	mu       sync.Mutex
 }
 
-// ServerConnectionLimiter 每个服务器连接数限制器
 type ServerConnectionLimiter struct {
 	mu         sync.Mutex
 	connCounts map[string]int
@@ -1283,7 +1265,6 @@ func (c *DiskCache) Clear() error {
 }
 
 func preallocateFile(file *os.File, size int64, sparse bool) error {
-	// 尝试使用不同的预分配策略
 	stat, err := file.Stat()
 	if err != nil {
 		return err
@@ -1293,14 +1274,12 @@ func preallocateFile(file *os.File, size int64, sparse bool) error {
 	}
 
 	if sparse {
-		// 稀疏文件：只设置文件大小，不预先分配磁盘块
 		if err := file.Truncate(size); err != nil {
 			return err
 		}
 		return nil
 	}
 
-	// 先尝试通过写入最后一个字节来强制分配
 	if _, err := file.Seek(size-1, 0); err != nil {
 		return err
 	}
@@ -1308,6 +1287,5 @@ func preallocateFile(file *os.File, size int64, sparse bool) error {
 		return err
 	}
 
-	// 现在 truncate 到正确大小
 	return file.Truncate(size)
 }
