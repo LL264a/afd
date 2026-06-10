@@ -260,6 +260,8 @@ func doDownload(url, outputPath string) error {
 	startTime := time.Now()
 
 	go func() {
+		var lastProgress float64
+		var stallCount int
 		for {
 			select {
 			case <-ctx.Done():
@@ -268,14 +270,33 @@ func doDownload(url, outputPath string) error {
 				progress := d.Progress()
 				speed := d.Speed()
 				downloaded := d.TotalDownloaded()
+				fileSize := int64(0)
+				if progress > 0 && speed > 0 {
+					fileSize = int64(float64(downloaded) / progress * 100)
+				}
 
-				if speed > 0 {
-					remaining := float64(downloaded) / float64(speed)
+				if speed > 0 && fileSize > 0 {
+					remaining := float64(fileSize-downloaded) / float64(speed)
+					if remaining < 0 {
+						remaining = 0
+					}
 					eta := time.Duration(remaining) * time.Second
-					fmt.Printf("\r进度: %.1f%% | 速度: %s/s | 已下载: %s | 预计剩余: %s",
-						progress, formatBytes(speed), formatBytes(downloaded), eta.Round(time.Second))
+					threads := d.ActiveThreads()
+					fmt.Printf("\r进度: %.1f%% | 速度: %s/s | 已下载: %s | 剩余: %s | 线程: %d  ",
+						progress, formatBytes(speed), formatBytes(downloaded), eta.Round(time.Second), threads)
 				} else {
-					fmt.Printf("\r进度: %.1f%% | 已下载: %s", progress, formatBytes(downloaded))
+					fmt.Printf("\r进度: %.1f%% | 已下载: %s  ", progress, formatBytes(downloaded))
+				}
+
+				// 检测卡住
+				if progress == lastProgress {
+					stallCount++
+				} else {
+					stallCount = 0
+					lastProgress = progress
+				}
+				if stallCount > 60 { // 30秒无进度
+					fmt.Print("[等待响应...]")
 				}
 			}
 		}

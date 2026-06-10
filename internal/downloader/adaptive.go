@@ -41,13 +41,13 @@ func newAdaptiveController(maxThreads, minThreads int) *adaptiveController {
 	}
 
 	return &adaptiveController{
-		samples:           make([]speedSample, 10),
-		windowSize:        10,
+		samples:           make([]speedSample, 20),
+		windowSize:        20,
 		maxThreads:        int32(maxThreads),
 		minThreads:        int32(minThreads),
-		speedThresholdLow: 100 * 1024,
-		speedImproveRatio: 1.3,
-		adjustInterval:    2 * time.Second,
+		speedThresholdLow: 50 * 1024, // 50 KB/s
+		speedImproveRatio: 1.2,
+		adjustInterval:    3 * time.Second,
 	}
 }
 
@@ -144,14 +144,20 @@ func (ac *adaptiveController) shouldAdjust() (adjusted bool, newThreads int32) {
 
 	current := atomic.LoadInt32(&ac.activeThreads)
 
+	// 速度低于阈值且未达最大线程 → 加线程
 	if intervalSpeed < ac.speedThresholdLow && current < ac.maxThreads {
 		newT := ac.incrementThreads()
 		return true, newT
 	}
 
-	if current > ac.minThreads {
-		probeSpeed := int64(float64(intervalSpeed) / float64(current) * float64(current+1) * ac.speedImproveRatio)
-		if probeSpeed < intervalSpeed {
+	// 速度足够高时，评估减少线程是否不影响速度
+	if current > ac.minThreads && intervalSpeed > ac.speedThresholdLow {
+		// 估算单线程速度
+		perThreadSpeed := intervalSpeed / int64(current)
+		// 预测减少一个线程后的速度
+		predictedSpeed := perThreadSpeed * int64(current-1)
+		// 如果预测速度仍然高于阈值的 90%，可以减少线程
+		if predictedSpeed > int64(float64(intervalSpeed)*0.9) && current > 2 {
 			newT := ac.decrementThreads()
 			return true, newT
 		}

@@ -418,7 +418,6 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 	}
 	d.adaptive.setThreadCount(initialThreads)
 
-	sem := make(chan struct{}, d.cfg.MaxConnections)
 	var wg sync.WaitGroup
 	var errOnce sync.Once
 	var downloadErr error
@@ -469,6 +468,11 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 
 	defer close(d.done)
 
+	// 使用动态信号量实现自适应线程控制
+	// 自适应模式下通过 adaptiveSem 控制并发数
+	maxSem := make(chan struct{}, d.cfg.MaxConnections)
+	adaptiveSem := make(chan struct{}, d.cfg.MaxConnections)
+
 	for i := 0; i < d.cfg.MaxConnections; i++ {
 		wg.Add(1)
 		go func() {
@@ -495,10 +499,49 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 					return
 				}
 
-				sem <- struct{}{}
+			// 自适应模式：检查当前允许的线程数
+				if d.cfg.Adaptive {
+					maxThreads := d.adaptive.threadCount()
+					// 非阻塞尝试获取信号量，如果当前活跃线程数已达上限则等待
+					select {
+					case maxSem <- struct{}{}:
+						// 检查是否超出自适应线程限制
+						currentActive := len(maxSem)
+						if currentActive > int(maxThreads) {
+							<-maxSem // 释放，等待下次
+							// 把 chunk 放回 pending
+							d.chunkMu.Lock()
+							chunk.Status = ChunkPending
+							d.chunkMu.Unlock()
+							time.Sleep(500 * time.Millisecond)
+							continue
+						}
+					case <-ctx.Done():
+						d.chunkMu.Lock()
+						chunk.Status = ChunkPending
+						d.chunkMu.Unlock()
+						d.SaveProgress()
+						return
+					}
+				} else {
+					select {
+					case adaptiveSem <- struct{}{}:
+					case <-ctx.Done():
+						d.chunkMu.Lock()
+						chunk.Status = ChunkPending
+						d.chunkMu.Unlock()
+						d.SaveProgress()
+						return
+					}
+				}
 
 				err := d.downloadChunk(ctx, file, chunk)
-				<-sem
+
+				if d.cfg.Adaptive {
+					<-maxSem
+				} else {
+					<-adaptiveSem
+				}
 
 				if err != nil {
 					chunk.Status = ChunkFailed
@@ -563,6 +606,7 @@ func (d *Downloader) headRequest(ctx context.Context) (int64, bool, error) {
 	if err != nil {
 		return 0, false, fmt.Errorf("create head request: %w", err)
 	}
+	req.Header.Set("User-Agent", "AFD/0.3")
 
 	resp, err := d.client.Do(req)
 	if err != nil {
@@ -583,7 +627,7 @@ func (d *Downloader) headRequest(ctx context.Context) (int64, bool, error) {
 }
 
 func (d *Downloader) getSizeViaGet(ctx context.Context) (int64, bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.url, nil)
+	req, err := d.newGetRequest(ctx, d.url)
 	if err != nil {
 		return 0, false, fmt.Errorf("create get request: %w", err)
 	}
@@ -642,6 +686,9 @@ func (d *Downloader) downloadChunk(ctx context.Context, file *os.File, chunk *Ch
 	urls := []string{d.url}
 	urls = append(urls, d.altURLs...)
 
+	backoff := time.Second
+	maxBackoff := 30 * time.Second
+
 	var lastErr error
 	for _, downloadURL := range urls {
 		for retry := 0; retry <= d.cfg.RetryCount; retry++ {
@@ -649,7 +696,12 @@ func (d *Downloader) downloadChunk(ctx context.Context, file *os.File, chunk *Ch
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
-				case <-time.After(time.Duration(retry) * time.Second):
+				case <-time.After(backoff):
+				}
+				// 指数退避
+				backoff = time.Duration(float64(backoff) * 1.5)
+				if backoff > maxBackoff {
+					backoff = maxBackoff
 				}
 			}
 
@@ -663,11 +715,19 @@ func (d *Downloader) downloadChunk(ctx context.Context, file *os.File, chunk *Ch
 			}
 
 			lastErr = err
+
+			// 416/404 等永久错误不重试
+			if IsPermanentError(err) {
+				d.logger.Warnw("permanent error, skipping retry",
+					"start", chunk.Start, "end", chunk.End, "error", err)
+				break
+			}
+
 			d.logger.Warnw("retrying chunk",
 				"retry", retry,
 				"start", chunk.Start,
 				"end", chunk.End,
-				"url", downloadURL,
+				"downloaded", chunk.Downloaded,
 				"error", err,
 			)
 		}
@@ -682,35 +742,18 @@ func (d *Downloader) downloadChunkOnce(ctx context.Context, file *os.File, chunk
 }
 
 func (d *Downloader) downloadChunkOnceFromURL(ctx context.Context, file *os.File, chunk *Chunk, downloadURL string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	req, err := d.newGetRequest(ctx, downloadURL)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
 
-	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", chunk.Start, chunk.End))
-
-	d.logger.Debugw("starting chunk request",
-		"url", downloadURL,
-		"range", fmt.Sprintf("bytes=%d-%d", chunk.Start, chunk.End),
-		"chunk_size", chunk.Size(),
-	)
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", chunk.Start+chunk.Downloaded, chunk.End))
 
 	resp, err := d.client.Do(req)
 	if err != nil {
-		d.logger.Warnw("chunk request failed",
-			"error", err,
-			"url", downloadURL,
-			"range", fmt.Sprintf("bytes=%d-%d", chunk.Start, chunk.End),
-		)
 		return fmt.Errorf("request: %w", err)
 	}
 	defer resp.Body.Close()
-
-	d.logger.Debugw("chunk response received",
-		"status", resp.StatusCode,
-		"content_length", resp.ContentLength,
-		"content_range", resp.Header.Get("Content-Range"),
-	)
 
 	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
 		return fmt.Errorf("server does not support range requests (416)")
@@ -721,66 +764,55 @@ func (d *Downloader) downloadChunkOnceFromURL(ctx context.Context, file *os.File
 	}
 
 	buf := make([]byte, d.cfg.BufferSize)
-	bytesRead := int64(0)
 
 	for {
-		readChan := make(chan readResult, 1)
-		go func() {
-			n, err := resp.Body.Read(buf)
-			readChan <- readResult{n, err}
-		}()
-
-		select {
-		case <-ctx.Done():
-			d.logger.Warnw("chunk download cancelled",
-				"bytes_read", bytesRead,
-				"chunk_start", chunk.Start,
-				"chunk_end", chunk.End,
-			)
-			return fmt.Errorf("cancelled: %w", ctx.Err())
-		case rr := <-readChan:
-			n, readErr := rr.n, rr.err
-			if n > 0 {
-				bytesRead += int64(n)
-				if d.rateLimiter != nil {
-					if err := d.rateLimiter.Wait(ctx, int64(n)); err != nil {
-						return fmt.Errorf("rate limit: %w", err)
-					}
-				}
-
-				writeOffset := chunk.Start + chunk.Downloaded
-				_, writeErr := file.WriteAt(buf[:n], writeOffset)
-				if writeErr != nil {
-					return fmt.Errorf("write chunk: %w", writeErr)
-				}
-
-				chunk.Downloaded += int64(n)
-				atomic.AddInt64(&d.totalDownloaded, int64(n))
-				d.recordSpeed(int64(n))
-
-				if d.shouldSaveProgress(int64(n)) {
-					d.SaveProgress()
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if d.rateLimiter != nil {
+				if err := d.rateLimiter.Wait(ctx, int64(n)); err != nil {
+					return fmt.Errorf("rate limit: %w", err)
 				}
 			}
 
-			if readErr != nil {
-				if readErr == io.EOF {
-					d.logger.Debugw("chunk download completed",
-						"bytes_read", bytesRead,
-						"chunk_start", chunk.Start,
-						"chunk_end", chunk.End,
-					)
-					return nil
-				}
-				return fmt.Errorf("read chunk: %w", readErr)
+			writeOffset := chunk.Start + chunk.Downloaded
+			if _, writeErr := file.WriteAt(buf[:n], writeOffset); writeErr != nil {
+				return fmt.Errorf("write chunk: %w", writeErr)
 			}
+
+			chunk.Downloaded += int64(n)
+			atomic.AddInt64(&d.totalDownloaded, int64(n))
+			d.recordSpeed(int64(n))
+
+			if d.shouldSaveProgress(int64(n)) {
+				d.SaveProgress()
+			}
+		}
+
+		if readErr != nil {
+			if readErr == io.EOF {
+				return nil
+			}
+			// context 取消导致的读错误直接传播
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("read chunk: %w", readErr)
 		}
 	}
 }
 
-type readResult struct {
-	n   int
-	err error
+// newGetRequest 创建 GET 请求，保留原始 URL 路径字符不被二次编码
+func (d *Downloader) newGetRequest(ctx context.Context, rawURL string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	// 保留原始 URL 中的特殊字符（如 [ ] 中文等），避免 Go http 包二次编码
+	if req.URL != nil {
+		req.URL.RawPath = ""
+	}
+	req.Header.Set("User-Agent", "AFD/0.3")
+	return req, nil
 }
 
 func (d *Downloader) recordSpeed(bytes int64) {
@@ -857,7 +889,7 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 		return d.singleThreadResume(ctx, existingSize)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.url, nil)
+	req, err := d.newGetRequest(ctx, d.url)
 	if err != nil {
 		return err
 	}
@@ -926,7 +958,7 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 }
 
 func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.url, nil)
+	req, err := d.newGetRequest(ctx, d.url)
 	if err != nil {
 		return err
 	}
