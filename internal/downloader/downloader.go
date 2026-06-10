@@ -54,6 +54,8 @@ type Downloader struct {
 	fileSize        int64
 	startTime       time.Time
 
+	pieceMgr *PieceManager
+
 	adaptive *adaptiveController
 
 	lastSaveTime  time.Time
@@ -409,8 +411,44 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 		return d.singleThreadDownload(ctx)
 	}
 
-	chunks := d.prepareChunks(fileSize)
-	d.logger.Infow("chunks prepared", "total_chunks", len(chunks))
+	// 使用 Piece+Block 模型
+	pieces := SplitFileIntoPieces(fileSize, d.cfg)
+	pm := NewPieceManager(pieces, fileSize)
+	d.pieceMgr = pm
+
+	d.logger.Infow("pieces prepared", "total_pieces", len(pieces))
+
+	// 恢复已下载的进度
+	stat, statErr := os.Stat(d.outputPath)
+	if statErr == nil && stat.Size() > 0 {
+		existingSize := stat.Size()
+		for _, p := range pieces {
+			pieceEnd := p.Start + p.Length
+			if existingSize >= pieceEnd {
+				// 整个 Piece 已下载完成
+				numBlocks := p.blocks.NumBlocks()
+				for i := 0; i < numBlocks; i++ {
+					p.CompleteBlock(i)
+				}
+				pm.CompletePiece(p.Index)
+				atomic.AddInt64(&d.totalDownloaded, p.Length)
+			} else if existingSize > p.Start {
+				// 部分 Block 已下载
+				completedInPiece := existingSize - p.Start
+				if completedInPiece > p.Length {
+					completedInPiece = p.Length
+				}
+				completedBlocks := int(completedInPiece / DefaultBlockLength)
+				for i := 0; i < completedBlocks && i < p.blocks.NumBlocks(); i++ {
+					p.CompleteBlock(i)
+				}
+				atomic.AddInt64(&d.totalDownloaded, completedInPiece)
+				if p.IsComplete() {
+					pm.CompletePiece(p.Index)
+				}
+			}
+		}
+	}
 
 	initialThreads := int32(d.cfg.MaxConnections)
 	if d.cfg.Adaptive {
@@ -469,14 +507,18 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 	defer close(d.done)
 
 	// 使用动态信号量实现自适应线程控制
-	// 自适应模式下通过 adaptiveSem 控制并发数
 	maxSem := make(chan struct{}, d.cfg.MaxConnections)
 	adaptiveSem := make(chan struct{}, d.cfg.MaxConnections)
+
+	minStealSize := d.cfg.MinChunkSize
 
 	for i := 0; i < d.cfg.MaxConnections; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+
+			cuid := pm.NextCUID()
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -485,41 +527,81 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 				default:
 				}
 
-				d.chunkMu.Lock()
-				var chunk *Chunk
-				for idx := range chunks {
-					if chunks[idx].Status == ChunkPending {
-						chunks[idx].Status = ChunkDownloading
-						chunk = chunks[idx]
-						break
+				// 尝试获取一个空闲 Piece
+				piece := pm.GetPieceForDownload(cuid)
+
+				// 如果没有空闲 Piece，尝试 segment stealing
+				if piece == nil {
+					stealStart, stealEnd, srcPiece := pm.TryStealPiece(cuid, minStealSize)
+					if stealStart >= 0 && srcPiece != nil {
+						// 自适应模式：检查当前允许的线程数
+						if d.cfg.Adaptive {
+							maxThreads := d.adaptive.threadCount()
+							select {
+							case maxSem <- struct{}{}:
+								currentActive := len(maxSem)
+								if currentActive > int(maxThreads) {
+									<-maxSem
+									time.Sleep(500 * time.Millisecond)
+									continue
+								}
+							case <-ctx.Done():
+								d.SaveProgress()
+								return
+							}
+						} else {
+							select {
+							case adaptiveSem <- struct{}{}:
+							case <-ctx.Done():
+								d.SaveProgress()
+								return
+							}
+						}
+
+						err := d.downloadRange(ctx, file, stealStart, stealEnd, srcPiece)
+
+						if d.cfg.Adaptive {
+							<-maxSem
+						} else {
+							<-adaptiveSem
+						}
+
+						if err != nil {
+							errOnce.Do(func() {
+								downloadErr = err
+							})
+							d.logger.Errorw("range download failed",
+								"start", stealStart,
+								"end", stealEnd,
+								"error", err,
+							)
+							d.SaveProgress()
+							return
+						}
+						continue
 					}
-				}
-				d.chunkMu.Unlock()
-				if chunk == nil {
+
+					// 没有可偷的范围，也没有空闲 Piece，下载完成
 					return
 				}
 
-			// 自适应模式：检查当前允许的线程数
+				// 自适应模式：检查当前允许的线程数
 				if d.cfg.Adaptive {
 					maxThreads := d.adaptive.threadCount()
-					// 非阻塞尝试获取信号量，如果当前活跃线程数已达上限则等待
 					select {
 					case maxSem <- struct{}{}:
-						// 检查是否超出自适应线程限制
 						currentActive := len(maxSem)
 						if currentActive > int(maxThreads) {
-							<-maxSem // 释放，等待下次
-							// 把 chunk 放回 pending
-							d.chunkMu.Lock()
-							chunk.Status = ChunkPending
-							d.chunkMu.Unlock()
+							<-maxSem
+							// 把 piece 放回 idle
+							piece.SetStatus(PieceIdle)
+							piece.SetOwner(0)
 							time.Sleep(500 * time.Millisecond)
 							continue
 						}
 					case <-ctx.Done():
-						d.chunkMu.Lock()
-						chunk.Status = ChunkPending
-						d.chunkMu.Unlock()
+						piece.SetStatus(PieceIdle)
+						piece.SetOwner(0)
 						d.SaveProgress()
 						return
 					}
@@ -527,15 +609,17 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 					select {
 					case adaptiveSem <- struct{}{}:
 					case <-ctx.Done():
-						d.chunkMu.Lock()
-						chunk.Status = ChunkPending
-						d.chunkMu.Unlock()
+						piece.SetStatus(PieceIdle)
+						piece.SetOwner(0)
 						d.SaveProgress()
 						return
 					}
 				}
 
-				err := d.downloadChunk(ctx, file, chunk)
+				// 获取动态 end offset（aria2 风格：如果下一个 piece 空闲，扩展到文件末尾）
+				endOffset := pm.GetEndOffset(piece.Index)
+
+				err := d.downloadPiece(ctx, file, piece, endOffset, pm)
 
 				if d.cfg.Adaptive {
 					<-maxSem
@@ -544,20 +628,18 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 				}
 
 				if err != nil {
-					chunk.Status = ChunkFailed
 					errOnce.Do(func() {
 						downloadErr = err
 					})
-					d.logger.Errorw("chunk download failed",
-						"start", chunk.Start,
-						"end", chunk.End,
+					d.logger.Errorw("piece download failed",
+						"piece_index", piece.Index,
+						"start", piece.Start,
+						"length", piece.Length,
 						"error", err,
 					)
 					d.SaveProgress()
 					return
 				}
-
-				chunk.Status = ChunkDone
 			}
 		}()
 	}
@@ -801,6 +883,385 @@ func (d *Downloader) downloadChunkOnceFromURL(ctx context.Context, file *os.File
 	}
 }
 
+// downloadPiece 下载一个 Piece，使用 block 级别追踪完成状态
+// endOffset 是动态 Range 结束位置（aria2 风格：如果下一个 piece 空闲，可扩展到文件末尾）
+func (d *Downloader) downloadPiece(ctx context.Context, file *os.File, piece *Piece, endOffset int64, pm *PieceManager) error {
+	urls := []string{d.url}
+	urls = append(urls, d.altURLs...)
+
+	backoff := time.Second
+	maxBackoff := 30 * time.Second
+
+	// 低速检测参数
+	minSpeed := d.cfg.MinSpeed
+	minSpeedTimeout := d.cfg.MinSpeedTimeout
+	if minSpeedTimeout <= 0 {
+		minSpeedTimeout = 30 * time.Second
+	}
+
+	var lastErr error
+	for _, downloadURL := range urls {
+		for retry := 0; retry <= d.cfg.RetryCount; retry++ {
+			if retry > 0 {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(backoff):
+				}
+				backoff = time.Duration(float64(backoff) * 1.5)
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+			}
+
+			err := d.downloadPieceOnceFromURL(ctx, file, piece, endOffset, pm, downloadURL, minSpeed, minSpeedTimeout)
+			if err == nil {
+				return nil
+			}
+
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+
+			lastErr = err
+
+			// 416/404 等永久错误不重试
+			if IsPermanentError(err) {
+				d.logger.Warnw("permanent error, skipping retry",
+					"piece_index", piece.Index, "error", err)
+				break
+			}
+
+			d.logger.Warnw("retrying piece",
+				"retry", retry,
+				"piece_index", piece.Index,
+				"start", piece.Start,
+				"length", piece.Length,
+				"error", err,
+			)
+		}
+		d.logger.Warnw("source failed, trying next", "url", downloadURL, "error", lastErr)
+	}
+
+	return fmt.Errorf("piece download failed from all sources: %w", lastErr)
+}
+
+// downloadPieceOnceFromURL 从指定 URL 下载一个 Piece 的一次尝试
+func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File, piece *Piece, endOffset int64, pm *PieceManager, downloadURL string, minSpeed int64, minSpeedTimeout time.Duration) error {
+	// 使用 block 级别下载
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// 检查 piece 是否已完成
+		if piece.IsComplete() {
+			pm.CompletePiece(piece.Index)
+			return nil
+		}
+
+		// 获取下一个未下载的 block
+		blockOffset, blockLength := piece.NextUnusedBlock()
+		if blockOffset < 0 {
+			// 没有更多 block 可用，等待或完成
+			if piece.IsComplete() {
+				pm.CompletePiece(piece.Index)
+				return nil
+			}
+			// 所有 block 都被占用但未完成，短暂等待后重试
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		// 计算 Range 请求的范围
+		rangeEnd := blockOffset + blockLength - 1
+		// 使用动态 endOffset：如果 endOffset 超过当前 block 末尾，可以一次请求更多数据
+		if endOffset > rangeEnd {
+			rangeEnd = endOffset
+		}
+		// 不超过文件大小
+		if rangeEnd > d.fileSize-1 {
+			rangeEnd = d.fileSize - 1
+		}
+
+		req, err := d.newGetRequest(ctx, downloadURL)
+		if err != nil {
+			piece.CancelBlock(piece.BlockIndexForOffset(blockOffset))
+			return fmt.Errorf("create request: %w", err)
+		}
+
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", blockOffset, rangeEnd))
+
+		resp, err := d.client.Do(req)
+		if err != nil {
+			piece.CancelBlock(piece.BlockIndexForOffset(blockOffset))
+			return fmt.Errorf("request: %w", err)
+		}
+
+		if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			resp.Body.Close()
+			piece.CancelBlock(piece.BlockIndexForOffset(blockOffset))
+			return fmt.Errorf("server does not support range requests (416)")
+		}
+
+		if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			piece.CancelBlock(piece.BlockIndexForOffset(blockOffset))
+			return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		}
+
+		// 低速检测状态
+		var lowSpeedBytes int64
+		lowSpeedStart := time.Now()
+		lowSpeedDetected := false
+
+		buf := make([]byte, d.cfg.BufferSize)
+		currentOffset := blockOffset
+		currentBlockIdx := piece.BlockIndexForOffset(blockOffset)
+		remainingInBlock := blockLength
+
+		for {
+			n, readErr := resp.Body.Read(buf)
+			if n > 0 {
+				if d.rateLimiter != nil {
+					if err := d.rateLimiter.Wait(ctx, int64(n)); err != nil {
+						resp.Body.Close()
+						piece.CancelBlock(currentBlockIdx)
+						return fmt.Errorf("rate limit: %w", err)
+					}
+				}
+
+				if _, writeErr := file.WriteAt(buf[:n], currentOffset); writeErr != nil {
+					resp.Body.Close()
+					piece.CancelBlock(currentBlockIdx)
+					return fmt.Errorf("write piece: %w", writeErr)
+				}
+
+				written := int64(n)
+				atomic.AddInt64(&d.totalDownloaded, written)
+				d.recordSpeed(written)
+
+				currentOffset += written
+				remainingInBlock -= written
+
+				// 低速检测
+				if minSpeed > 0 {
+					lowSpeedBytes += written
+					elapsed := time.Since(lowSpeedStart)
+					if elapsed >= time.Second {
+						currentSpeed := lowSpeedBytes / int64(elapsed.Seconds())
+						if currentSpeed < minSpeed {
+							if time.Since(lowSpeedStart) >= minSpeedTimeout {
+								d.logger.Warnw("low speed detected, closing connection to retry",
+									"speed", currentSpeed,
+									"min_speed", minSpeed,
+									"piece_index", piece.Index,
+								)
+								lowSpeedDetected = true
+								resp.Body.Close()
+								// 取消当前 block 占用，让重试时重新获取
+								piece.CancelBlock(currentBlockIdx)
+								break
+							}
+						} else {
+							// 速度恢复，重置检测窗口
+							lowSpeedBytes = 0
+							lowSpeedStart = time.Now()
+						}
+					}
+				}
+
+				// 当当前 block 下载完成时，标记完成并移到下一个 block
+				if remainingInBlock <= 0 {
+					piece.CompleteBlock(currentBlockIdx)
+
+					if d.shouldSaveProgress(written) {
+						d.SaveProgress()
+					}
+
+					if piece.IsComplete() {
+						resp.Body.Close()
+						pm.CompletePiece(piece.Index)
+						return nil
+					}
+
+					// 获取下一个 block
+					nextOffset, nextLength := piece.NextUnusedBlock()
+					if nextOffset < 0 {
+						// 没有更多 block 可获取，但 piece 未完成（其他 goroutine 在下载剩余 block）
+						resp.Body.Close()
+						return nil
+					}
+
+					currentBlockIdx = piece.BlockIndexForOffset(nextOffset)
+					remainingInBlock = nextLength
+					// 注意：我们继续读取同一 HTTP 响应的数据，写入下一个 block 的位置
+					// 因为 Range 请求可能返回超出当前 block 的数据（动态 endOffset）
+				}
+			}
+
+			if readErr != nil {
+				resp.Body.Close()
+				if readErr == io.EOF {
+					// 标记当前 block 完成
+					if remainingInBlock <= 0 {
+						piece.CompleteBlock(currentBlockIdx)
+					}
+					if piece.IsComplete() {
+						pm.CompletePiece(piece.Index)
+					}
+					return nil
+				}
+				if ctx.Err() != nil {
+					piece.CancelBlock(currentBlockIdx)
+					return ctx.Err()
+				}
+				piece.CancelBlock(currentBlockIdx)
+				return fmt.Errorf("read piece: %w", readErr)
+			}
+		}
+
+		if lowSpeedDetected {
+			return fmt.Errorf("low speed detected, connection closed for retry")
+		}
+	}
+}
+
+// downloadRange 下载一个偷来的范围（segment stealing），并将数据写入文件
+func (d *Downloader) downloadRange(ctx context.Context, file *os.File, start, end int64, piece *Piece) error {
+	urls := []string{d.url}
+	urls = append(urls, d.altURLs...)
+
+	backoff := time.Second
+	maxBackoff := 30 * time.Second
+
+	var lastErr error
+	for _, downloadURL := range urls {
+		for retry := 0; retry <= d.cfg.RetryCount; retry++ {
+			if retry > 0 {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(backoff):
+				}
+				backoff = time.Duration(float64(backoff) * 1.5)
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+			}
+
+			err := d.downloadRangeOnceFromURL(ctx, file, start, end, piece, downloadURL)
+			if err == nil {
+				return nil
+			}
+
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+
+			lastErr = err
+
+			if IsPermanentError(err) {
+				d.logger.Warnw("permanent error in range download, skipping retry",
+					"start", start, "end", end, "error", err)
+				break
+			}
+
+			d.logger.Warnw("retrying range download",
+				"retry", retry,
+				"start", start,
+				"end", end,
+				"error", err,
+			)
+		}
+		d.logger.Warnw("source failed, trying next", "url", downloadURL, "error", lastErr)
+	}
+
+	return fmt.Errorf("range download failed from all sources: %w", lastErr)
+}
+
+// downloadRangeOnceFromURL 从指定 URL 下载一个范围的一次尝试
+func (d *Downloader) downloadRangeOnceFromURL(ctx context.Context, file *os.File, start, end int64, piece *Piece, downloadURL string) error {
+	req, err := d.newGetRequest(ctx, downloadURL)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+		return fmt.Errorf("server does not support range requests (416)")
+	}
+
+	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	buf := make([]byte, d.cfg.BufferSize)
+	currentOffset := start
+
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if d.rateLimiter != nil {
+				if err := d.rateLimiter.Wait(ctx, int64(n)); err != nil {
+					return fmt.Errorf("rate limit: %w", err)
+				}
+			}
+
+			if _, writeErr := file.WriteAt(buf[:n], currentOffset); writeErr != nil {
+				return fmt.Errorf("write range: %w", writeErr)
+			}
+
+			written := int64(n)
+			currentOffset += written
+			atomic.AddInt64(&d.totalDownloaded, written)
+			d.recordSpeed(written)
+
+			if d.shouldSaveProgress(written) {
+				d.SaveProgress()
+			}
+
+			// 标记对应 block 为完成
+			blockIdx := piece.BlockIndexForOffset(currentOffset - written)
+			blockStart := piece.Start + int64(blockIdx)*DefaultBlockLength
+			blockEnd := blockStart + piece.blocks.BlockLength(blockIdx)
+			if currentOffset >= blockEnd {
+				piece.CompleteBlock(blockIdx)
+			}
+		}
+
+		if readErr != nil {
+			if readErr == io.EOF {
+				// 标记所有已下载的 block 为完成
+				blockIdx := piece.BlockIndexForOffset(start)
+				endBlockIdx := piece.BlockIndexForOffset(end)
+				for i := blockIdx; i <= endBlockIdx && i < piece.blocks.NumBlocks(); i++ {
+					piece.CompleteBlock(i)
+				}
+				if piece.IsComplete() {
+					if d.pieceMgr != nil {
+						d.pieceMgr.CompletePiece(piece.Index)
+					}
+				}
+				return nil
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("read range: %w", readErr)
+		}
+	}
+}
+
 // newGetRequest 创建 GET 请求，保留原始 URL 路径字符不被二次编码
 func (d *Downloader) newGetRequest(ctx context.Context, rawURL string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
@@ -861,6 +1322,11 @@ func (d *Downloader) Speed() int64 {
 func (d *Downloader) Progress() float64 {
 	if d.fileSize <= 0 {
 		return 0
+	}
+	// 优先使用 PieceManager 的精确进度
+	if d.pieceMgr != nil {
+		completed := d.pieceMgr.TotalCompletedLength()
+		return float64(completed) / float64(d.fileSize) * 100
 	}
 	downloaded := atomic.LoadInt64(&d.totalDownloaded)
 	return float64(downloaded) / float64(d.fileSize) * 100
