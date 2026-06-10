@@ -5,6 +5,15 @@ All notable changes to NexusDL are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0-beta](https://github.com/LL264a/afd/compare/v0.2.3-beta...v0.3.0-beta) (2026-06-10)
+
+
+### Features
+
+* add --insecure/-k flag to skip TLS certificate verification ([2f44ace](https://github.com/LL264a/afd/commit/2f44acec924afa968156b8a24a65440ced0b68d9))
+* add --insecure/-k flag to skip TLS certificate verification ([8f083c4](https://github.com/LL264a/afd/commit/8f083c4c5f2256f53d9351f60e356874b98310b2))
+* add insecure TLS support, disable HTTP/2, improve chunk download logging ([a169c35](https://github.com/LL264a/afd/commit/a169c3554ad96d3b16f16d47bc1ad21de968f2c7))
+
 ## [Unreleased]
 
 ### Changed (BREAKING)
