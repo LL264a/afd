@@ -191,6 +191,7 @@ func (d *SFTPDownloader) SetControlFilePath(path string)         {}
 func (d *SFTPDownloader) SetControlFile(cf interface{})          {}
 func (d *SFTPDownloader) URL() string                            { return d.url }
 func (d *SFTPDownloader) OutputPath() string                     { return d.outputPath }
+func (d *SFTPDownloader) FileSize() int64                         { return 0 }
 func (d *SFTPDownloader) Speed() int64                           { return atomic.LoadInt64(&d.speed) }
 func (d *SFTPDownloader) Progress() float64                      { return 0 }
 func (d *SFTPDownloader) TotalDownloaded() int64                 { return atomic.LoadInt64(&d.downloaded) }

@@ -85,6 +85,10 @@ func (d *TorrentDownloader) OutputPath() string {
 	return d.outputPath
 }
 
+func (d *TorrentDownloader) FileSize() int64 {
+	return 0
+}
+
 func (d *TorrentDownloader) Speed() int64 {
 	return atomic.LoadInt64(&d.speed)
 }

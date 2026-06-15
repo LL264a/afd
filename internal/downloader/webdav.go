@@ -157,6 +157,10 @@ func (d *WebDAVDownloader) OutputPath() string {
 	return d.outputPath
 }
 
+func (d *WebDAVDownloader) FileSize() int64 {
+	return d.fileSize
+}
+
 func (d *WebDAVDownloader) GetFileSize(ctx context.Context) (int64, error) {
 	return GetWebDAVFileSize(ctx, d.client, d.url, d.user, d.password)
 }

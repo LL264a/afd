@@ -48,12 +48,12 @@ func Init(level string, logFile string) error {
 		consoleEncoder := zapcore.NewConsoleEncoder(encoderConfig)
 
 		fileCore := zapcore.NewCore(fileEncoder, zapcore.AddSync(file), lvl)
-		consoleCore := zapcore.NewCore(consoleEncoder, zapcore.AddSync(os.Stdout), lvl)
+		consoleCore := zapcore.NewCore(consoleEncoder, zapcore.AddSync(os.Stderr), lvl)
 		core = zapcore.NewTee(fileCore, consoleCore)
 	} else {
 		core = zapcore.NewCore(
 			zapcore.NewConsoleEncoder(encoderConfig),
-			zapcore.AddSync(os.Stdout),
+			zapcore.AddSync(os.Stderr),
 			lvl,
 		)
 	}

@@ -10,16 +10,23 @@ import (
 )
 
 type ControlFile struct {
-	InfoHash        string    `json:"infohash"`
-	TotalLength     int64     `json:"totalLength"`
-	CompletedLength int64     `json:"completedLength"`
-	PieceLength     int64     `json:"pieceLength"`
-	Pieces          string    `json:"pieces"`
-	Bitfield        string    `json:"bitfield"`
-	NumPieces       int       `json:"numPieces"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
-	Status          string    `json:"status"`
+	InfoHash        string                   `json:"infohash"`
+	TotalLength     int64                    `json:"totalLength"`
+	CompletedLength int64                    `json:"completedLength"`
+	PieceLength     int64                    `json:"pieceLength"`
+	Pieces          string                   `json:"pieces"`
+	Bitfield        string                   `json:"bitfield"`
+	NumPieces       int                      `json:"numPieces"`
+	PieceBitfields  []PieceBitfieldEntry     `json:"pieceBitfields,omitempty"`
+	CreatedAt       time.Time                `json:"createdAt"`
+	UpdatedAt       time.Time                `json:"updatedAt"`
+	Status          string                   `json:"status"`
+}
+
+// PieceBitfieldEntry 保存单个 Piece 的 Block 级完成位图
+type PieceBitfieldEntry struct {
+	Index    int    `json:"index"`
+	Bitfield string `json:"bitfield"` // base64 编码的位图
 }
 
 func (cf *ControlFile) MarshalJSON() ([]byte, error) {
@@ -57,7 +64,7 @@ type ControlFileStore struct {
 
 func NewControlFileStore(dataDir string) *ControlFileStore {
 	return &ControlFileStore{
-		dataDir: filepath.Join(dataDir, "nexus-dl"),
+		dataDir: filepath.Join(dataDir, "afd"),
 	}
 }
 
@@ -69,7 +76,7 @@ func (s *ControlFileStore) dir() (string, error) {
 }
 
 func (s *ControlFileStore) filePath(taskID string) string {
-	return filepath.Join(s.dataDir, taskID+".aria2")
+	return filepath.Join(s.dataDir, taskID+".ctl")
 }
 
 func (s *ControlFileStore) Save(taskID string, cf *ControlFile) error {
@@ -147,10 +154,10 @@ func (s *ControlFileStore) List() ([]string, error) {
 
 	var taskIDs []string
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".aria2" {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".ctl" {
 			continue
 		}
-		taskID := entry.Name()[:len(entry.Name())-6]
+		taskID := entry.Name()[:len(entry.Name())-4]
 		taskIDs = append(taskIDs, taskID)
 	}
 

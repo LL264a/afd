@@ -148,6 +148,10 @@ func (d *S3Downloader) OutputPath() string {
 	return d.outputPath
 }
 
+func (d *S3Downloader) FileSize() int64 {
+	return d.fileSize
+}
+
 func (d *S3Downloader) Download(ctx context.Context) error {
 	d.lastSpeedCheck = time.Now()
 	d.lastSpeedBytes = 0

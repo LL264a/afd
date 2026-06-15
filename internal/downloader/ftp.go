@@ -700,6 +700,10 @@ func (d *FTPDownloader) OutputPath() string {
 	return d.outputPath
 }
 
+func (d *FTPDownloader) FileSize() int64 {
+	return d.fileSize
+}
+
 func (d *FTPDownloader) Download(ctx context.Context) error {
 	d.startTime = time.Now()
 

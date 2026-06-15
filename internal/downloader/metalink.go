@@ -74,6 +74,7 @@ func (m *MetalinkDownloader) SetControlFilePath(p string)   {}
 func (m *MetalinkDownloader) SetControlFile(cf interface{}) {}
 func (m *MetalinkDownloader) URL() string                   { return m.metalinkPath }
 func (m *MetalinkDownloader) OutputPath() string            { return m.outputDir }
+func (m *MetalinkDownloader) FileSize() int64               { return 0 }
 func (m *MetalinkDownloader) Speed() int64                  { return 0 }
 func (m *MetalinkDownloader) Progress() float64 {
 	m.mu.Lock()

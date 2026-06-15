@@ -226,25 +226,16 @@ func doDownload(url, outputPath string) error {
 
 	log := logger.Log.Named("download")
 
-	fmt.Printf("开始下载: %s\n", url)
-	fmt.Printf("保存到: %s\n", outputPath)
-	if speedLimit != "" {
-		fmt.Printf("速度限制: %s\n", speedLimit)
-	}
-	if parallel > 0 {
-		fmt.Printf("连接数: %d\n", parallel)
-	}
-	if adaptive {
-		fmt.Printf("自适应模式: 启用\n")
-	}
-	if insecure {
-		fmt.Printf("跳过TLS验证: 启用\n")
-	}
+	log.Infow("starting download", "url", url, "output", outputPath,
+		"speed_limit", speedLimit, "parallel", parallel, "adaptive", adaptive, "insecure", insecure)
 
 	d, err := downloader.NewDownloaderFromURL(url, outputPath, cfg, log)
 	if err != nil {
 		return fmt.Errorf("创建下载器失败: %w", err)
 	}
+
+	// 设置控制文件路径，支持断点续传
+	d.SetControlFilePath(outputPath + ".ctl")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -252,51 +243,36 @@ func doDownload(url, outputPath string) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
-		<-sigCh
-		fmt.Println("\n正在停止下载...")
+		sig := <-sigCh
+		log.Infow("received signal, stopping download", "signal", sig)
 		cancel()
 	}()
 
 	startTime := time.Now()
 
 	go func() {
-		var lastProgress float64
-		var stallCount int
+		var lastLoggedPct int
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(500 * time.Millisecond):
+			case <-time.After(2 * time.Second):
 				progress := d.Progress()
 				speed := d.Speed()
 				downloaded := d.TotalDownloaded()
-				fileSize := int64(0)
-				if progress > 0 && speed > 0 {
-					fileSize = int64(float64(downloaded) / progress * 100)
-				}
+				fileSize := d.FileSize()
+				pct := int(progress)
 
-				if speed > 0 && fileSize > 0 {
-					remaining := float64(fileSize-downloaded) / float64(speed)
-					if remaining < 0 {
-						remaining = 0
+				// 每 10% 或速度变化时输出一次
+				if pct != lastLoggedPct || speed > 0 {
+					lastLoggedPct = pct
+					if fileSize > 0 {
+						log.Infow("progress", "pct", pct, "downloaded", formatBytes(downloaded),
+							"total", formatBytes(fileSize), "speed", fmt.Sprintf("%s/s", formatBytes(speed)))
+					} else {
+						log.Infow("progress", "pct", pct, "downloaded", formatBytes(downloaded),
+							"speed", fmt.Sprintf("%s/s", formatBytes(speed)))
 					}
-					eta := time.Duration(remaining) * time.Second
-					threads := d.ActiveThreads()
-					fmt.Printf("\r进度: %.1f%% | 速度: %s/s | 已下载: %s | 剩余: %s | 线程: %d  ",
-						progress, formatBytes(speed), formatBytes(downloaded), eta.Round(time.Second), threads)
-				} else {
-					fmt.Printf("\r进度: %.1f%% | 已下载: %s  ", progress, formatBytes(downloaded))
-				}
-
-				// 检测卡住
-				if progress == lastProgress {
-					stallCount++
-				} else {
-					stallCount = 0
-					lastProgress = progress
-				}
-				if stallCount > 60 { // 30秒无进度
-					fmt.Print("[等待响应...]")
 				}
 			}
 		}
@@ -304,19 +280,23 @@ func doDownload(url, outputPath string) error {
 
 	err = d.Download(ctx)
 
-	fmt.Println()
+	// 下载完成后 cancel context，停止进度显示 goroutine
+	cancel()
+
 	if err != nil {
 		if ctx.Err() != nil {
-			fmt.Println("下载已取消")
+			log.Infow("download cancelled")
 			return nil
 		}
 		return fmt.Errorf("下载失败: %w", err)
 	}
 
 	elapsed := time.Since(startTime)
-	fmt.Printf("下载完成! 耗时: %s, 平均速度: %s/s\n",
-		elapsed.Round(time.Second),
-		formatBytes(int64(float64(d.TotalDownloaded())/elapsed.Seconds())))
+	fileSize := d.FileSize()
+	log.Infow("download finished",
+		"elapsed", elapsed.Round(time.Second).String(),
+		"file_size", formatBytes(fileSize),
+		"avg_speed", fmt.Sprintf("%s/s", formatBytes(int64(float64(fileSize)/elapsed.Seconds()))))
 
 	return nil
 }
@@ -394,7 +374,7 @@ func formatBytes(n int64) string {
 		return fmt.Sprintf("%d B", n)
 	}
 	div, exp := int64(unit), 0
-	for n >= unit*1024 {
+	for n >= div*unit {
 		div *= unit
 		exp++
 	}

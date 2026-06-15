@@ -56,13 +56,16 @@ type Downloader struct {
 
 	pieceMgr *PieceManager
 
+	done     chan struct{}
+	doneOnce sync.Once
+
+
 	adaptive *adaptiveController
 
 	lastSaveTime  time.Time
 	sinceLastSave int64
 	saveInterval  time.Duration
 	progressChan  chan struct{}
-	done          chan struct{}
 
 	diskCache *DiskCache
 }
@@ -188,6 +191,7 @@ type DownloaderInterface interface {
 	SetControlFile(cf interface{})
 	URL() string
 	OutputPath() string
+	FileSize() int64
 	Download(ctx context.Context) error
 	Speed() int64
 	Progress() float64
@@ -310,9 +314,19 @@ func (d *Downloader) SaveProgress() error {
 		}
 	}
 
+	// CompletedLength 用 totalDownloaded（实际写入字节数），pieceBitfields 用于精确续传
 	d.controlFile.CompletedLength = atomic.LoadInt64(&d.totalDownloaded)
 	d.controlFile.TotalLength = d.fileSize
 	d.controlFile.UpdatedAt = time.Now()
+
+	// 序列化 Piece 级 Block 位图（用于精确续传）
+	if d.pieceMgr != nil {
+		entries := d.pieceMgr.SerializePieceBitfields()
+		if len(entries) > 0 {
+			d.controlFile.PieceBitfields = entries
+			d.controlFile.NumPieces = len(d.pieceMgr.pieces)
+		}
+	}
 
 	store := task.NewControlFileStore(filepath.Dir(d.controlFilePath))
 	taskID := strings.TrimSuffix(filepath.Base(d.controlFilePath), filepath.Ext(d.controlFilePath))
@@ -353,6 +367,10 @@ func (d *Downloader) OutputPath() string {
 	return d.outputPath
 }
 
+func (d *Downloader) FileSize() int64 {
+	return d.fileSize
+}
+
 func (d *Downloader) Download(ctx context.Context) error {
 	d.startTime = time.Now()
 	d.lastSaveTime = time.Now()
@@ -363,6 +381,13 @@ func (d *Downloader) Download(ctx context.Context) error {
 }
 
 func (d *Downloader) doDownload(ctx context.Context) error {
+	// 每次重试时重新初始化 done channel
+	d.done = make(chan struct{})
+	d.doneOnce = sync.Once{}
+
+	// 确保 done channel 在所有退出路径上都被关闭，通知 periodicSaveProgress 退出
+	defer d.doneOnce.Do(func() { close(d.done) })
+
 	if err := d.LoadProgress(ctx); err != nil {
 		d.logger.Warnw("failed to load progress", "error", err)
 	}
@@ -381,29 +406,47 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 		"url", d.url,
 	)
 
+	// 使用 controlFile.CompletedLength 判断续传进度（不用 os.Stat，因为预分配文件会导致文件大小等于完整大小）
+	resumeCompleted := int64(0)
 	if d.controlFile != nil && d.controlFile.CompletedLength > 0 {
-		localFileSize := d.controlFile.CompletedLength
+		resumeCompleted = d.controlFile.CompletedLength
 
-		stat, err := os.Stat(d.outputPath)
-		if err == nil {
-			localFileSize = stat.Size()
-		}
-
-		if localFileSize == fileSize && fileSize > 0 {
-			d.logger.Infow("file already fully downloaded, skipping")
-			atomic.StoreInt64(&d.totalDownloaded, fileSize)
-			if d.controlFile != nil {
+		if resumeCompleted >= fileSize && fileSize > 0 {
+			// 验证本地文件确实存在且大小匹配
+			stat, err := os.Stat(d.outputPath)
+			if err == nil && stat.Size() == fileSize {
+				d.logger.Infow("file already fully downloaded, skipping")
+				atomic.StoreInt64(&d.totalDownloaded, fileSize)
 				d.controlFile.Status = "completed"
 				d.SaveProgress()
+				return nil
 			}
-			return nil
+			// controlFile 说下完了但文件不对，重置进度
+			d.logger.Warnw("control file says completed but local file mismatch, re-downloading",
+				"control_completed", resumeCompleted,
+				"file_size_on_disk", func() int64 {
+					if s, e := os.Stat(d.outputPath); e == nil {
+						return s.Size()
+					}
+					return -1
+				}(),
+			)
+			resumeCompleted = 0
 		}
 
-		if localFileSize > 0 && localFileSize < fileSize {
+		if resumeCompleted > 0 && resumeCompleted < fileSize {
 			d.logger.Infow("resuming download",
-				"local_size", localFileSize,
-				"server_size", fileSize,
+				"completed_length", resumeCompleted,
+				"total_size", fileSize,
 			)
+		}
+	} else {
+		// 没有 controlFile，检查本地文件是否存在且完整
+		stat, err := os.Stat(d.outputPath)
+		if err == nil && stat.Size() == fileSize && fileSize > 0 {
+			d.logger.Infow("file already fully downloaded, skipping")
+			atomic.StoreInt64(&d.totalDownloaded, fileSize)
+			return nil
 		}
 	}
 
@@ -419,34 +462,53 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 	d.logger.Infow("pieces prepared", "total_pieces", len(pieces))
 
 	// 恢复已下载的进度
-	stat, statErr := os.Stat(d.outputPath)
-	if statErr == nil && stat.Size() > 0 {
-		existingSize := stat.Size()
-		for _, p := range pieces {
-			pieceEnd := p.Start + p.Length
-			if existingSize >= pieceEnd {
-				// 整个 Piece 已下载完成
-				numBlocks := p.blocks.NumBlocks()
-				for i := 0; i < numBlocks; i++ {
-					p.CompleteBlock(i)
-				}
-				pm.CompletePiece(p.Index)
-				atomic.AddInt64(&d.totalDownloaded, p.Length)
-			} else if existingSize > p.Start {
-				// 部分 Block 已下载
-				completedInPiece := existingSize - p.Start
-				if completedInPiece > p.Length {
-					completedInPiece = p.Length
-				}
-				completedBlocks := int(completedInPiece / DefaultBlockLength)
-				for i := 0; i < completedBlocks && i < p.blocks.NumBlocks(); i++ {
-					p.CompleteBlock(i)
-				}
-				atomic.AddInt64(&d.totalDownloaded, completedInPiece)
+	if resumeCompleted > 0 {
+		// 优先使用 Block 级位图恢复（精确到每个 Block）
+		if d.controlFile != nil && len(d.controlFile.PieceBitfields) > 0 {
+			pm.RestorePieceBitfields(d.controlFile.PieceBitfields)
+			// 统计恢复的已完成 Piece 数
+			completedPieces := 0
+			for _, p := range pieces {
 				if p.IsComplete() {
-					pm.CompletePiece(p.Index)
+					completedPieces++
 				}
 			}
+			atomic.StoreInt64(&d.totalDownloaded, pm.TotalCompletedLength())
+			d.logger.Infow("resumed progress from block-level bitfields",
+				"completed_length", pm.TotalCompletedLength(),
+				"total_pieces", len(pieces),
+				"completed_pieces", completedPieces,
+			)
+		} else {
+			// 回退到 CompletedLength 粗略恢复
+			for _, p := range pieces {
+				pieceEnd := p.Start + p.Length
+				if resumeCompleted >= pieceEnd {
+					numBlocks := p.blocks.NumBlocks()
+					for i := 0; i < numBlocks; i++ {
+						p.CompleteBlock(i)
+					}
+					pm.CompletePiece(p.Index)
+					atomic.AddInt64(&d.totalDownloaded, p.Length)
+				} else if resumeCompleted > p.Start {
+					completedInPiece := resumeCompleted - p.Start
+					if completedInPiece > p.Length {
+						completedInPiece = p.Length
+					}
+					completedBlocks := int(completedInPiece / DefaultBlockLength)
+					for i := 0; i < completedBlocks && i < p.blocks.NumBlocks(); i++ {
+						p.CompleteBlock(i)
+					}
+					atomic.AddInt64(&d.totalDownloaded, completedInPiece)
+					if p.IsComplete() {
+						pm.CompletePiece(p.Index)
+					}
+				}
+			}
+			d.logger.Infow("resumed progress from completed length",
+				"completed_length", resumeCompleted,
+				"total_pieces", len(pieces),
+			)
 		}
 	}
 
@@ -489,11 +551,8 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 					return fmt.Errorf("truncate output file: %w", err)
 				}
 			}
-		} else {
-			if err := file.Truncate(fileSize); err != nil {
-				return fmt.Errorf("truncate output file: %w", err)
-			}
 		}
+		// 不预分配时，文件按需增长（通过 Seek+Write），避免 os.Stat 误判续传进度
 	}
 
 	if d.cfg.FileMode != 0 {
@@ -503,8 +562,6 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 	}
 
 	go d.periodicSaveProgress(ctx)
-
-	defer close(d.done)
 
 	// 使用动态信号量实现自适应线程控制
 	maxSem := make(chan struct{}, d.cfg.MaxConnections)
@@ -658,8 +715,17 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 		d.SaveProgress()
 	}
 
+	// 下载完成后删除控制文件
+	if d.controlFilePath != "" {
+		store := task.NewControlFileStore(filepath.Dir(d.controlFilePath))
+		taskID := strings.TrimSuffix(filepath.Base(d.controlFilePath), filepath.Ext(d.controlFilePath))
+		if err := store.Delete(taskID); err != nil && !strings.Contains(err.Error(), "not found") {
+			d.logger.Warnw("failed to remove control file", "path", d.controlFilePath, "error", err)
+		}
+	}
+
 	d.logger.Infow("download completed",
-		"total_bytes", atomic.LoadInt64(&d.totalDownloaded),
+		"total_bytes", d.fileSize,
 		"duration", time.Since(d.startTime),
 	)
 
@@ -1105,10 +1171,8 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 			if readErr != nil {
 				resp.Body.Close()
 				if readErr == io.EOF {
-					// 标记当前 block 完成
-					if remainingInBlock <= 0 {
-						piece.CompleteBlock(currentBlockIdx)
-					}
+					// EOF 时标记当前 block 完成（数据已写入文件）
+					piece.CompleteBlock(currentBlockIdx)
 					if piece.IsComplete() {
 						pm.CompletePiece(piece.Index)
 					}
@@ -1341,18 +1405,37 @@ func (d *Downloader) ActiveThreads() int32 {
 }
 
 func (d *Downloader) singleThreadDownload(ctx context.Context) error {
-	stat, err := os.Stat(d.outputPath)
+	// 使用 controlFile 判断续传进度
 	existingSize := int64(0)
-	if err == nil {
-		existingSize = stat.Size()
-	}
-
-	if existingSize > 0 && existingSize < d.fileSize {
-		d.logger.Infow("resuming single-thread download",
-			"existing_size", existingSize,
-			"total_size", d.fileSize,
-		)
-		return d.singleThreadResume(ctx, existingSize)
+	if d.controlFile != nil && d.controlFile.CompletedLength > 0 {
+		existingSize = d.controlFile.CompletedLength
+		if existingSize >= d.fileSize && d.fileSize > 0 {
+			stat, err := os.Stat(d.outputPath)
+			if err == nil && stat.Size() == d.fileSize {
+				d.logger.Infow("file already fully downloaded, skipping")
+				atomic.StoreInt64(&d.totalDownloaded, d.fileSize)
+				return nil
+			}
+			existingSize = 0
+		}
+		if existingSize > 0 && existingSize < d.fileSize {
+			d.logger.Infow("resuming single-thread download",
+				"completed_length", existingSize,
+				"total_size", d.fileSize,
+			)
+			return d.singleThreadResume(ctx, existingSize)
+		}
+	} else {
+		// 没有 controlFile，检查本地文件
+		stat, err := os.Stat(d.outputPath)
+		if err == nil && stat.Size() > 0 && stat.Size() < d.fileSize {
+			existingSize = stat.Size()
+			d.logger.Infow("resuming single-thread download from local file",
+				"existing_size", existingSize,
+				"total_size", d.fileSize,
+			)
+			return d.singleThreadResume(ctx, existingSize)
+		}
 	}
 
 	req, err := d.newGetRequest(ctx, d.url)
@@ -1370,18 +1453,25 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
+	outputDir := filepath.Dir(d.outputPath)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("create output directory: %w", err)
+	}
+
 	file, err := os.Create(d.outputPath)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
+	go d.periodicSaveProgress(ctx)
+
 	buf := make([]byte, d.cfg.BufferSize)
-	downloaded := int64(0)
 
 	for {
 		select {
 		case <-ctx.Done():
+			d.SaveProgress()
 			return ctx.Err()
 		default:
 		}
@@ -1390,6 +1480,7 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 		if n > 0 {
 			if d.rateLimiter != nil {
 				if err := d.rateLimiter.Wait(ctx, int64(n)); err != nil {
+					d.SaveProgress()
 					return err
 				}
 			}
@@ -1399,7 +1490,6 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 				return fmt.Errorf("write: %w", writeErr)
 			}
 
-			downloaded += int64(n)
 			atomic.AddInt64(&d.totalDownloaded, int64(n))
 			d.recordSpeed(int64(n))
 
@@ -1412,14 +1502,22 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 			if readErr == io.EOF {
 				break
 			}
+			d.SaveProgress()
 			return fmt.Errorf("read: %w", readErr)
 		}
 	}
 
-	if resp.ContentLength > 0 {
-		d.fileSize = existingSize + resp.ContentLength
-	}
 	d.SaveProgress()
+
+	// 下载完成后删除控制文件
+	if d.controlFilePath != "" {
+		store := task.NewControlFileStore(filepath.Dir(d.controlFilePath))
+		taskID := strings.TrimSuffix(filepath.Base(d.controlFilePath), filepath.Ext(d.controlFilePath))
+		if err := store.Delete(taskID); err != nil && !strings.Contains(err.Error(), "not found") {
+			d.logger.Warnw("failed to remove control file", "path", d.controlFilePath, "error", err)
+		}
+	}
+
 	return nil
 }
 
@@ -1461,12 +1559,14 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 
 	atomic.StoreInt64(&d.totalDownloaded, existingSize)
 
+	go d.periodicSaveProgress(ctx)
+
 	buf := make([]byte, d.cfg.BufferSize)
-	var downloaded int64
 
 	for {
 		select {
 		case <-ctx.Done():
+			d.SaveProgress()
 			return ctx.Err()
 		default:
 		}
@@ -1475,6 +1575,7 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 		if n > 0 {
 			if d.rateLimiter != nil {
 				if err := d.rateLimiter.Wait(ctx, int64(n)); err != nil {
+					d.SaveProgress()
 					return err
 				}
 			}
@@ -1484,7 +1585,6 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 				return fmt.Errorf("write: %w", writeErr)
 			}
 
-			downloaded += int64(n)
 			atomic.AddInt64(&d.totalDownloaded, int64(n))
 			d.recordSpeed(int64(n))
 
@@ -1497,11 +1597,22 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 			if readErr == io.EOF {
 				break
 			}
+			d.SaveProgress()
 			return fmt.Errorf("read: %w", readErr)
 		}
 	}
 
 	d.SaveProgress()
+
+	// 下载完成后删除控制文件
+	if d.controlFilePath != "" {
+		store := task.NewControlFileStore(filepath.Dir(d.controlFilePath))
+		taskID := strings.TrimSuffix(filepath.Base(d.controlFilePath), filepath.Ext(d.controlFilePath))
+		if err := store.Delete(taskID); err != nil && !strings.Contains(err.Error(), "not found") {
+			d.logger.Warnw("failed to remove control file", "path", d.controlFilePath, "error", err)
+		}
+	}
+
 	return nil
 }
 

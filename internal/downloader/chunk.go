@@ -1,8 +1,10 @@
 package downloader
 
 import (
+	"encoding/base64"
 	"sync"
 
+	"github.com/nexus-dl/afd/internal/task"
 	"github.com/nexus-dl/afd/pkg/config"
 )
 
@@ -501,6 +503,59 @@ func (pm *PieceManager) ActivePieceCount() int {
 	}
 	return count
 }
+
+// SerializePieceBitfields 将所有 Piece 的 Block 完成位图序列化为可存储的格式
+func (pm *PieceManager) SerializePieceBitfields() []task.PieceBitfieldEntry {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	entries := make([]task.PieceBitfieldEntry, 0, len(pm.pieces))
+	for _, p := range pm.pieces {
+		p.mu.Lock()
+		bf := p.blocks.GetBitfield()
+		p.mu.Unlock()
+		// 只有序列化有意义的位图（非空且有已完成 block）
+		hasCompleted := false
+		for _, b := range bf {
+			if b != 0 {
+				hasCompleted = true
+				break
+			}
+		}
+		if hasCompleted {
+			entries = append(entries, task.PieceBitfieldEntry{
+				Index:    p.Index,
+				Bitfield: base64.StdEncoding.EncodeToString(bf),
+			})
+		}
+	}
+	return entries
+}
+
+// RestorePieceBitfields 从保存的位图恢复每个 Piece 的 Block 完成状态
+func (pm *PieceManager) RestorePieceBitfields(entries []task.PieceBitfieldEntry) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	for _, entry := range entries {
+		if entry.Index < 0 || entry.Index >= len(pm.pieces) {
+			continue
+		}
+		bf, err := base64.StdEncoding.DecodeString(entry.Bitfield)
+		if err != nil {
+			continue
+		}
+		p := pm.pieces[entry.Index]
+		p.mu.Lock()
+		p.blocks.SetBitfield(bf)
+		// 检查是否所有 block 都完成了
+		if p.blocks.IsAllBitSet() {
+			p.status = PieceComplete
+		}
+		p.mu.Unlock()
+	}
+}
+
 
 // 保留旧的 Chunk 类型以兼容 singleThreadDownload
 type ChunkStatus int
