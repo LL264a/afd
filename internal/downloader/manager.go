@@ -3,6 +3,7 @@ package downloader
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ type activeDownload struct {
 	cancel        context.CancelFunc
 	done          chan struct{}
 	lowSpeedSince time.Time
+	startTime     time.Time
 }
 
 type DownloadManager struct {
@@ -30,6 +32,7 @@ type DownloadManager struct {
 	downloadCfg   *config.DownloadConfig
 	active        map[string]*activeDownload
 	stopCh        chan struct{}
+	stopOnce      sync.Once
 	wg            sync.WaitGroup
 	eventEmitter  *internal.EventEmitter
 	postProcessor *internal.PostProcessor
@@ -72,7 +75,9 @@ func (m *DownloadManager) Start() {
 
 func (m *DownloadManager) Stop() {
 	logger.Log.Info("Stopping download manager...")
-	close(m.stopCh)
+	m.stopOnce.Do(func() {
+		close(m.stopCh)
+	})
 
 	m.mu.Lock()
 	for id, dl := range m.active {
@@ -101,13 +106,20 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 
 	outputPath := t.OutputPath
 	if outputPath == "" {
-		outputPath = filepath.Join("data", "downloads", filepath.Base(t.URL))
+		// 清理 URL 中的查询参数和片段
+		u, err := url.Parse(t.URL)
+		if err == nil {
+			outputPath = filepath.Join("data", "downloads", filepath.Base(u.Path))
+		} else {
+			outputPath = filepath.Join("data", "downloads", filepath.Base(t.URL))
+		}
 	}
 
 	dl := &activeDownload{
-		task:   t,
-		cancel: cancel,
-		done:   make(chan struct{}),
+		task:      t,
+		cancel:    cancel,
+		done:      make(chan struct{}),
+		startTime: time.Now(),
 	}
 	m.active[t.ID] = dl
 
@@ -122,6 +134,7 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
+		defer close(dl.done)
 		defer func() {
 			m.mu.Lock()
 			delete(m.active, t.ID)
@@ -143,7 +156,11 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 		// 启动进度监控 goroutine
 		progressCtx, progressCancel := context.WithCancel(ctx)
 		defer progressCancel()
-		go m.monitorDownloadProgress(progressCtx, t, d)
+		m.wg.Add(1)
+		go func() {
+			defer m.wg.Done()
+			m.monitorDownloadProgress(progressCtx, t, d)
+		}()
 
 		err = d.Download(ctx)
 		if err != nil {
@@ -185,11 +202,10 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 		if m.postProcessor != nil {
 			// 检查是否是压缩文件
 			ext := filepath.Ext(outputPath)
-			isArchive := ext == ".zip" || ext == ".rar" || ext == ".7z" ||
-				strings.HasSuffix(ext, ".tar.gz") || strings.HasSuffix(ext, ".tgz") ||
-				strings.HasSuffix(ext, ".tar.bz2") || strings.HasSuffix(ext, ".tbz2") ||
-				strings.HasSuffix(ext, ".tar.xz") || strings.HasSuffix(ext, ".txz") ||
-				ext == ".tar"
+			isArchive := ext == ".zip" || ext == ".rar" || ext == ".7z" || ext == ".tar" ||
+				strings.HasSuffix(outputPath, ".tar.gz") || strings.HasSuffix(outputPath, ".tgz") ||
+				strings.HasSuffix(outputPath, ".tar.bz2") || strings.HasSuffix(outputPath, ".tbz2") ||
+				strings.HasSuffix(outputPath, ".tar.xz") || strings.HasSuffix(outputPath, ".txz")
 
 			if isArchive && m.downloadCfg.PostProcess != nil && m.downloadCfg.PostProcess.Extract.Enabled {
 				logger.Log.Infow("Extracting archive", "path", outputPath)
@@ -216,27 +232,31 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 
 func (m *DownloadManager) updateProgress() {
 	m.mu.RLock()
+	tasks := make([]*task.Task, 0, len(m.active))
 	for _, dl := range m.active {
-		m.hub.BroadcastTaskUpdate(dl.task)
+		tasks = append(tasks, dl.task)
 	}
 	m.mu.RUnlock()
+	for _, t := range tasks {
+		m.hub.BroadcastTaskUpdate(t)
+	}
 }
 
-func (m *DownloadManager) PauseDownload(id string) error {
+// PauseDownload 取消下载 context 并更新任务队列状态
+func (m *DownloadManager) PauseDownload(taskID string) error {
 	m.mu.Lock()
-	dl, exists := m.active[id]
-	if !exists {
-		m.mu.Unlock()
-		return fmt.Errorf("download %s not active", id)
-	}
-	cancelFn := dl.cancel
+	dl, ok := m.active[taskID]
 	m.mu.Unlock()
-
-	if cancelFn != nil {
-		cancelFn()
+	if !ok {
+		return fmt.Errorf("task %s not active", taskID)
 	}
-
-	logger.Log.Infow("Download paused", "task_id", id)
+	dl.cancel()
+	// 等待下载 goroutine 退出
+	<-dl.done
+	// 从 active 中移除
+	m.mu.Lock()
+	delete(m.active, taskID)
+	m.mu.Unlock()
 	return nil
 }
 
@@ -281,6 +301,11 @@ func (m *DownloadManager) monitorDownloadProgress(ctx context.Context, t *task.T
 				activeDl, exists := m.active[t.ID]
 				var shouldCancel bool
 				if exists {
+					// 下载开始后 30 秒内不检测低速
+					if time.Since(activeDl.startTime) < 30*time.Second {
+						m.mu.Unlock()
+						continue
+					}
 					if speed < m.downloadCfg.MinSpeed {
 						if activeDl.lowSpeedSince.IsZero() {
 							activeDl.lowSpeedSince = time.Now()
@@ -294,8 +319,12 @@ func (m *DownloadManager) monitorDownloadProgress(ctx context.Context, t *task.T
 				m.mu.Unlock()
 
 				if shouldCancel {
-					logger.Log.Infow("Download speed too low, pausing", "task_id", t.ID, "speed", speed)
-					m.PauseDownload(t.ID)
+					logger.Log.Infow("Download speed too low, failing task", "task_id", t.ID, "speed", speed)
+					m.mu.Lock()
+					delete(m.active, t.ID)
+					m.mu.Unlock()
+					m.taskQueue.FailTask(t.ID, "download speed too low")
+					continue
 				}
 			}
 		}

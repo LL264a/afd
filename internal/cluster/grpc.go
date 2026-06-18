@@ -141,6 +141,7 @@ type RPCServer struct {
 	requestID uint64
 	mu        sync.Mutex
 	running   bool
+	conns     map[net.Conn]struct{}
 }
 
 type RPCHandler interface {
@@ -243,7 +244,21 @@ func (s *RPCServer) acceptLoop() {
 
 func (s *RPCServer) handleConn(conn net.Conn) {
 	defer s.wg.Done()
-	defer conn.Close()
+
+	// 注册连接，以便 Shutdown 时能主动关闭
+	s.mu.Lock()
+	if s.conns == nil {
+		s.conns = make(map[net.Conn]struct{})
+	}
+	s.conns[conn] = struct{}{}
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		delete(s.conns, conn)
+		s.mu.Unlock()
+		conn.Close()
+	}()
 
 	// Per-connection read deadline; refreshed on each successful read.
 	// Prevents Slowloris-style attacks where a client connects and
@@ -364,16 +379,22 @@ func (s *RPCServer) writeMessage(conn net.Conn, resp *RPCResponse) error {
 }
 
 func (s *RPCServer) Shutdown() {
-	if !s.running {
-		return
-	}
-	s.running = false
-	close(s.stopCh)
-
-	if s.listener != nil {
-		s.listener.Close()
-	}
-
+	s.stopOnce.Do(func() {
+		s.mu.Lock()
+		s.running = false
+		s.mu.Unlock()
+		close(s.stopCh)
+		if s.listener != nil {
+			s.listener.Close()
+		}
+		// 关闭所有活跃连接
+		s.mu.Lock()
+		for conn := range s.conns {
+			conn.Close()
+		}
+		s.conns = nil
+		s.mu.Unlock()
+	})
 	s.wg.Wait()
 	logger.Log.Info("RPC server stopped")
 }
@@ -395,10 +416,9 @@ func NewRPCClient(addr string, auth *ClusterAuth) *RPCClient {
 	}
 }
 
-func (c *RPCClient) connect() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+// connectLocked dials the server if no connection exists. The caller
+// MUST hold c.mu.
+func (c *RPCClient) connectLocked() error {
 	if c.conn != nil {
 		return nil
 	}
@@ -420,16 +440,16 @@ func (c *RPCClient) connect() error {
 }
 
 func (c *RPCClient) Call(method string, req interface{}, resp interface{}) error {
-	if err := c.connect(); err != nil {
-		return err
-	}
-
 	// c.mu serializes both the request/response pairing on c.conn
 	// and the reqID counter.  Without holding it across the read,
 	// two concurrent callers would race on c.conn.Read and could
 	// receive each other's response.
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if err := c.connectLocked(); err != nil {
+		return err
+	}
 
 	var buf bytesBuffer
 	enc := gob.NewEncoder(&buf)
@@ -458,6 +478,11 @@ func (c *RPCClient) Call(method string, req interface{}, resp interface{}) error
 	header := make([]byte, FrameHeaderSize)
 	binary.BigEndian.PutUint32(header, uint32(len(data)))
 
+	// 设置读写超时，防止挂死
+	if err := c.conn.SetDeadline(time.Now().Add(c.timeout)); err != nil {
+		return err
+	}
+
 	if _, err := c.conn.Write(header); err != nil {
 		c.conn.Close()
 		c.conn = nil
@@ -478,6 +503,8 @@ func (c *RPCClient) Call(method string, req interface{}, resp interface{}) error
 
 	respLen := binary.BigEndian.Uint32(respHeader)
 	if respLen == 0 || respLen > MaxMessageSize {
+		c.conn.Close()
+		c.conn = nil
 		return fmt.Errorf("invalid response length: %d", respLen)
 	}
 
@@ -672,16 +699,16 @@ func NewStreamingClient(addr string, auth *ClusterAuth) *StreamingClient {
 }
 
 func (sc *StreamingClient) StreamTaskProgress(req StreamTaskProgressRequest, callback func(StreamTaskProgressResponse) error) error {
-	if err := sc.connect(); err != nil {
-		return err
-	}
-
 	// Serialize against any other Call/Stream on the same underlying
 	// connection: the request write and the read loop must both be
 	// guarded, otherwise concurrent callers would interleave on
 	// sc.conn.Read.
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
+
+	if err := sc.connectLocked(); err != nil {
+		return err
+	}
 
 	sc.reqID++
 	reqID := sc.reqID

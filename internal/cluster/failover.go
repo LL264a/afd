@@ -106,9 +106,8 @@ func (f *Failover) monitorLoop() {
 
 func (f *Failover) checkNodeHealth() {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-
 	nodes := f.scheduler.GetAllNodes()
+	var pendingReassign [][]string
 	for _, node := range nodes {
 		if node.ID == "" {
 			continue
@@ -121,12 +120,20 @@ func (f *Failover) checkNodeHealth() {
 
 		timeSinceHeartbeat := time.Since(lastHeartbeat)
 		if timeSinceHeartbeat > f.config.HeartbeatTimeout {
-			f.handleNodeFailure(node.ID)
+			if tasks := f.handleNodeFailure(node.ID); len(tasks) > 0 {
+				pendingReassign = append(pendingReassign, tasks)
+			}
 		}
+	}
+	f.mu.Unlock()
+
+	// 释放锁后再执行任务重分配，避免在持有 f.mu 时调用外部回调
+	for _, tasks := range pendingReassign {
+		f.reassignTasks(tasks)
 	}
 }
 
-func (f *Failover) handleNodeFailure(nodeID string) {
+func (f *Failover) handleNodeFailure(nodeID string) []string {
 	f.logger.Warnf("Node %s failed, initiating failover", nodeID)
 
 	failed, exists := f.failedNodes[nodeID]
@@ -144,11 +151,14 @@ func (f *Failover) handleNodeFailure(nodeID string) {
 	if failed.RetryCount >= f.config.MaxRetries {
 		f.logger.Errorf("Node %s failed after %d retries, removing permanently", nodeID, f.config.MaxRetries)
 		f.scheduler.RemoveNode(nodeID)
+		// 先保存任务列表
+		tasksToReassign := failed.Tasks
 		delete(f.failedNodes, nodeID)
-		return
+		return tasksToReassign
 	}
 
 	f.logger.Infof("Scheduling task reassignment for node %s in %v", nodeID, f.config.ReassignDelay)
+	tasksToReassign := failed.Tasks
 	time.AfterFunc(f.config.ReassignDelay, func() {
 		// Bail out if the failover has been stopped; otherwise we
 		// do wasted work and may touch a torn-down scheduler.
@@ -157,50 +167,45 @@ func (f *Failover) handleNodeFailure(nodeID string) {
 			return
 		default:
 		}
-		f.reassignTasks(nodeID)
+		f.reassignTasks(tasksToReassign)
 	})
+	return nil
 }
 
 func (f *Failover) getTasksForNode(nodeID string) []string {
 	return f.scheduler.GetTasksForNode(nodeID)
 }
 
-func (f *Failover) reassignTasks(nodeID string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	failed, exists := f.failedNodes[nodeID]
-	if !exists {
-		return
-	}
-
+func (f *Failover) reassignTasks(taskIDs []string) {
 	onlineNodes := f.scheduler.GetOnlineNodes()
 	if len(onlineNodes) == 0 {
-		f.logger.Warnf("No online nodes available for task reassignment")
+		f.logger.Warnw("No online nodes available for task reassignment")
 		return
 	}
 
-	nodeIdx := 0
-	for i, taskID := range failed.Tasks {
-		targetNode := onlineNodes[(nodeIdx+i)%len(onlineNodes)]
-		f.logger.Infof("Reassigning task %s from node %s to node %s", taskID, nodeID, targetNode.ID)
+	type reassignItem struct {
+		taskID string
+		nodeID string
+	}
+	items := make([]reassignItem, 0, len(taskIDs))
 
-		if f.taskReassign != nil {
-			if err := f.taskReassign(taskID, targetNode.ID); err != nil {
-				f.logger.Errorf("Failed to reassign task %s: %v", taskID, err)
-				continue
-			}
-		}
-
+	for i, taskID := range taskIDs {
+		targetNode := onlineNodes[i%len(onlineNodes)]
 		t, ok := f.scheduler.GetTask(taskID)
 		if ok {
-			t.TargetNode = targetNode.ID
+			t.SetTargetNode(targetNode.ID)
+			items = append(items, reassignItem{taskID: taskID, nodeID: targetNode.ID})
 		}
-		nodeIdx = (nodeIdx + 1) % len(onlineNodes)
 	}
 
-	delete(f.failedNodes, nodeID)
-	f.logger.Infof("Task reassignment completed for failed node %s", nodeID)
+	// 释放锁后执行外部回调（reassignTasks 自身不持有 f.mu）
+	for _, item := range items {
+		if f.taskReassign != nil {
+			if err := f.taskReassign(item.taskID, item.nodeID); err != nil {
+				f.logger.Errorf("Failed to reassign task %s to node %s: %v", item.taskID, item.nodeID, err)
+			}
+		}
+	}
 }
 
 func (f *Failover) GetFailedNodes() []*FailedNode {

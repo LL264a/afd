@@ -174,7 +174,7 @@ func TestSchedulerDispatchToLowestLoadNode(t *testing.T) {
 	t.Error("Task was not dispatched within timeout")
 }
 
-func TestSchedulerDispatchSkipsLocalNode(t *testing.T) {
+func TestSchedulerDispatchIncludesLocalNode(t *testing.T) {
 	s := newTestScheduler(t)
 	s.AddNode(newTestNode("local-node", StatusOnline, 0))
 	s.AddNode(newTestNode("remote-1", StatusOnline, 10))
@@ -186,8 +186,9 @@ func TestSchedulerDispatchSkipsLocalNode(t *testing.T) {
 	for time.Now().Before(deadline) {
 		got, _ := s.GetTask(t1.ID)
 		if got != nil && got.TargetNode != "" {
-			if got.TargetNode == "local-node" {
-				t.Error("Scheduler should never dispatch to local node")
+			// 本地节点负载更低(0 < 10)，应优先调度到本地节点
+			if got.TargetNode != "local-node" {
+				t.Errorf("Expected task dispatched to local-node (lower load), got %s", got.TargetNode)
 			}
 			return
 		}

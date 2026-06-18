@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -48,18 +49,24 @@ func NewMembership(localID string) *Membership {
 
 func (m *Membership) eventLoop() {
 	defer m.wg.Done()
-	for {
-		select {
-		case event := <-m.events:
-			m.mu.RLock()
-			handlers := make([]EventHandler, len(m.handlers))
-			copy(handlers, m.handlers)
-			m.mu.RUnlock()
-			for _, handler := range handlers {
+	for event := range m.events {
+		m.mu.RLock()
+		handlers := make([]EventHandler, len(m.handlers))
+		copy(handlers, m.handlers)
+		m.mu.RUnlock()
+
+		for _, handler := range handlers {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Log.Errorw("cluster event handler panic",
+							"error", fmt.Sprintf("%v", r),
+							"event_type", event.Type,
+						)
+					}
+				}()
 				handler(event)
-			}
-		case <-m.stopCh:
-			return
+			}()
 		}
 	}
 }
@@ -119,11 +126,14 @@ func (m *Membership) RemoveMember(nodeID string) {
 	})
 }
 
-func (m *Membership) GetMember(nodeID string) (*Node, bool) {
+func (m *Membership) GetMember(nodeID string) (Node, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	node, ok := m.members[nodeID]
-	return node, ok
+	if !ok {
+		return Node{}, false
+	}
+	return *node, true // 返回值拷贝，避免外部修改导致数据竞争
 }
 
 func (m *Membership) Members() []Node {
@@ -212,6 +222,10 @@ func (m *Membership) OnEvent(handler EventHandler) {
 }
 
 func (m *Membership) emitEvent(event ClusterEvent) {
+	defer func() {
+		// 防止 Shutdown 关闭 events channel 后发送导致 panic
+		recover()
+	}()
 	select {
 	case m.events <- event:
 	default:
@@ -224,7 +238,7 @@ func (m *Membership) emitEvent(event ClusterEvent) {
 
 func (m *Membership) Shutdown() {
 	m.stopOnce.Do(func() {
-		close(m.stopCh)
+		close(m.events)
 		m.wg.Wait()
 	})
 }

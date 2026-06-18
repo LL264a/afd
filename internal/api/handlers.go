@@ -145,11 +145,11 @@ func (h *TaskHandler) UpdateTask(w http.ResponseWriter, r *http.Request, id stri
 	}
 
 	if req.Priority != 0 {
-		t.Priority = req.Priority
+		t.SetPriority(req.Priority)
 	}
 
 	if req.Metadata != nil {
-		t.Metadata = req.Metadata
+		t.SetMetadata(req.Metadata)
 	}
 
 	h.hub.BroadcastTaskUpdate(t)

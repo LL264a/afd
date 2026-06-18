@@ -267,7 +267,9 @@ func (h *HolePuncher) GetConn() *net.UDPConn {
 }
 
 func (h *HolePuncher) Stop() {
-	close(h.stopCh)
+	h.stopOnce.Do(func() {
+		close(h.stopCh)
+	})
 	if h.conn != nil {
 		h.conn.Close()
 	}

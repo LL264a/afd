@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -83,6 +84,19 @@ func sendError(w http.ResponseWriter, code int, message string, details string) 
 	})
 }
 
+func isPrivateIP(host string) bool {
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return false
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+			return true
+		}
+	}
+	return false
+}
+
 func isValidURL(rawURL string) bool {
 	if rawURL == "" {
 		return false
@@ -96,7 +110,14 @@ func isValidURL(rawURL string) bool {
 	}
 	switch u.Scheme {
 	case "http", "https", "ftp", "ftps", "sftp", "s3", "webdav", "webdavs":
-		return u.Host != ""
+		if u.Host == "" {
+			return false
+		}
+		// SSRF 防护：阻止内网地址
+		if isPrivateIP(u.Hostname()) {
+			return false
+		}
+		return true
 	default:
 		return false
 	}
@@ -105,6 +126,10 @@ func isValidURL(rawURL string) bool {
 func isSafePath(path string) bool {
 	cleaned := filepath.Clean(path)
 	if strings.Contains(cleaned, "..") {
+		return false
+	}
+	// 阻止绝对路径
+	if filepath.IsAbs(cleaned) {
 		return false
 	}
 	return true
@@ -169,10 +194,19 @@ func NewServer(cfg *config.Config, taskQueue *task.TaskQueue, taskStore *task.Ta
 		Recovery(),
 		Logging(),
 		server.rateLimiterMiddleware(cfg.API.RateLimit, time.Minute),
-		CORS(cfg.API.EnableCORS),
+		CORS(cfg.API.EnableCORS, cfg.API.CORSAllowedOrigins...),
 		Auth(cfg.API.AuthToken),
 	}
-	mux.Handle("/api/v1/", Chain(apiMux, middlewares...))
+	// apiMux 内部路由以 /api/ 开头，挂载到 /api/v1/ 下时需要将
+	// /api/v1 前缀剥离并改写为 /api，使内部路由模式能够匹配。
+	v1Handler := http.StripPrefix("/api/v1", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = "/api" + r.URL.Path
+		if r.URL.RawPath != "" {
+			r.URL.RawPath = "/api" + r.URL.RawPath
+		}
+		apiMux.ServeHTTP(w, r)
+	}))
+	mux.Handle("/api/v1/", Chain(v1Handler, middlewares...))
 	mux.Handle("/api/", Chain(apiMux, append([]Middleware{Deprecation()}, middlewares...)...))
 	mux.Handle("/jsonrpc", Chain(apiMux, middlewares...))
 	mux.Handle("/xmlrpc", Chain(apiMux, middlewares...))
@@ -250,6 +284,7 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB
 	var req CreateTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendError(w, http.StatusBadRequest, "Invalid request body", err.Error())
@@ -452,7 +487,9 @@ func (s *Server) Stop() error {
 		s.rateLimitStop()
 		s.rateLimitStop = nil
 	}
-	return s.Shutdown(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return s.Shutdown(ctx)
 }
 
 func (s *Server) handlePauseAll(w http.ResponseWriter, r *http.Request) {

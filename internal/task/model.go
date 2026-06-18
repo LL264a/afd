@@ -109,6 +109,13 @@ func (t *Task) SetStatus(status TaskStatus) {
 	t.UpdatedAt = time.Now()
 }
 
+func (t *Task) SetTargetNode(nodeID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.TargetNode = nodeID
+	t.UpdatedAt = time.Now()
+}
+
 func (t *Task) SetError(err string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -117,9 +124,29 @@ func (t *Task) SetError(err string) {
 	t.UpdatedAt = time.Now()
 }
 
+func (t *Task) SetPriority(priority int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.Priority = priority
+	t.UpdatedAt = time.Now()
+}
+
+func (t *Task) SetMetadata(metadata map[string]string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.Metadata = metadata
+	t.UpdatedAt = time.Now()
+}
+
 func (t *Task) UpdateProgress(downloaded, total, speed int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if downloaded < 0 {
+		downloaded = 0
+	}
+	if total < 0 {
+		total = 0
+	}
 	t.DownloadedSize = downloaded
 	t.TotalSize = total
 	t.Speed = speed
@@ -150,6 +177,8 @@ func (t *Task) GetSafe() Task {
 	for k, v := range t.Metadata {
 		metadataCopy[k] = v
 	}
+	chunksCopy := make([]ChunkInfo, len(t.Chunks))
+	copy(chunksCopy, t.Chunks)
 	return Task{
 		ID:             t.ID,
 		URL:            t.URL,
@@ -163,7 +192,7 @@ func (t *Task) GetSafe() Task {
 		TargetNode:     t.TargetNode,
 		Protocol:       t.Protocol,
 		Metadata:       metadataCopy,
-		Chunks:         t.Chunks,
+		Chunks:         chunksCopy,
 		Error:          t.Error,
 		Priority:       t.Priority,
 		ChecksumType:   t.ChecksumType,
@@ -183,10 +212,18 @@ func (t *Task) GetContext() context.Context {
 	return t.ctx
 }
 
-func (t *Task) Cancel() {
+func (t *Task) SetCancel(cancel context.CancelFunc) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.cancel != nil {
-		t.cancel()
+	t.cancel = cancel
+}
+
+func (t *Task) Cancel() {
+	t.mu.Lock()
+	cancel := t.cancel
+	t.Status = StatusCancelled
+	t.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 }

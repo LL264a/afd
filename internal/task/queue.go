@@ -69,9 +69,8 @@ func NewTaskQueue(maxConcurrent int) *TaskQueue {
 
 func (q *TaskQueue) Add(task *Task) error {
 	q.mu.Lock()
-	defer q.mu.Unlock()
-
 	if _, exists := q.tasks[task.ID]; exists {
+		q.mu.Unlock()
 		return fmt.Errorf("task %s already exists", task.ID)
 	}
 
@@ -80,13 +79,17 @@ func (q *TaskQueue) Add(task *Task) error {
 	// Only enqueue when we cannot start immediately.  Otherwise the
 	// heap would carry stale entries for already-running tasks that
 	// tryStartNext has to pop and discard on every iteration.
-	if q.activeCount < q.maxConcurrent && task.GetStatus() == StatusPending {
-		q.startTask(task)
-	} else {
+	shouldStart := q.activeCount < q.maxConcurrent && task.GetStatus() == StatusPending
+	if !shouldStart {
 		heap.Push(&q.pq, &priorityItem{
 			task:     task,
 			priority: task.Priority,
 		})
+	}
+	q.mu.Unlock()
+
+	if shouldStart {
+		q.startTask(task)
 	}
 
 	return nil
@@ -132,41 +135,42 @@ func findPQIndex(pq []*priorityItem, id string) int {
 
 func (q *TaskQueue) Pause(id string) error {
 	q.mu.Lock()
-	defer q.mu.Unlock()
-
 	task, exists := q.tasks[id]
 	if !exists {
+		q.mu.Unlock()
 		return fmt.Errorf("task %s not found", id)
 	}
 
 	if task.GetStatus() != StatusDownloading {
+		q.mu.Unlock()
 		return fmt.Errorf("task %s is not downloading", id)
 	}
 
 	task.SetStatus(StatusPaused)
 	q.activeCount--
+	q.mu.Unlock()
+
 	q.tryStartNext()
 	return nil
 }
 
 func (q *TaskQueue) Resume(id string) error {
 	q.mu.Lock()
-	defer q.mu.Unlock()
-
 	task, exists := q.tasks[id]
 	if !exists {
+		q.mu.Unlock()
 		return fmt.Errorf("task %s not found", id)
 	}
 
 	if task.GetStatus() != StatusPaused {
+		q.mu.Unlock()
 		return fmt.Errorf("task %s is not paused", id)
 	}
 
 	task.SetStatus(StatusPending)
 
-	if q.activeCount < q.maxConcurrent {
-		q.startTask(task)
-	} else {
+	shouldStart := q.activeCount < q.maxConcurrent
+	if !shouldStart {
 		// No free slot: enqueue so tryStartNext can pick it up
 		// when a slot opens.  Without this the task sits in
 		// StatusPending forever.
@@ -174,6 +178,11 @@ func (q *TaskQueue) Resume(id string) error {
 			task:     task,
 			priority: task.Priority,
 		})
+	}
+	q.mu.Unlock()
+
+	if shouldStart {
+		q.startTask(task)
 	}
 
 	return nil
@@ -216,11 +225,14 @@ func (q *TaskQueue) TotalCount() int {
 
 func (q *TaskQueue) SetMaxConcurrent(max int) {
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	q.maxConcurrent = max
+	q.mu.Unlock()
+	q.tryStartNext()
 }
 
 func (q *TaskQueue) tryStartNext() {
+	tasksToStart := []*Task{}
+	q.mu.Lock()
 	for q.activeCount < q.maxConcurrent && q.pq.Len() > 0 {
 		item := heap.Pop(&q.pq).(*priorityItem)
 		task := item.task
@@ -232,17 +244,26 @@ func (q *TaskQueue) tryStartNext() {
 			continue
 		}
 
-		q.activeCount++
 		task.SetStatus(StatusDownloading)
+		q.activeCount++
+		tasksToStart = append(tasksToStart, task)
+	}
+	q.mu.Unlock()
+
+	// 释放锁后执行回调
+	for _, t := range tasksToStart {
 		if q.OnTaskStart != nil {
-			q.OnTaskStart(task)
+			q.OnTaskStart(t)
 		}
 	}
 }
 
 func (q *TaskQueue) startTask(task *Task) {
-	q.activeCount++
+	q.mu.Lock()
 	task.SetStatus(StatusDownloading)
+	q.activeCount++
+	q.mu.Unlock()
+
 	if q.OnTaskStart != nil {
 		q.OnTaskStart(task)
 	}
@@ -250,46 +271,50 @@ func (q *TaskQueue) startTask(task *Task) {
 
 func (q *TaskQueue) CompleteTask(id string) {
 	q.mu.Lock()
-	defer q.mu.Unlock()
-
 	task, exists := q.tasks[id]
 	if !exists {
+		q.mu.Unlock()
 		return
 	}
-
-	wasActive := task.GetStatus() == StatusDownloading
 	task.SetStatus(StatusDone)
-
-	if wasActive {
-		q.activeCount--
+	q.activeCount--
+	if q.activeCount < 0 {
+		q.activeCount = 0
 	}
+	q.mu.Unlock()
 
 	if q.OnTaskComplete != nil {
 		q.OnTaskComplete(task)
 	}
+
+	q.mu.Lock()
+	delete(q.tasks, id)
+	q.mu.Unlock()
 
 	q.tryStartNext()
 }
 
 func (q *TaskQueue) FailTask(id string, errMsg string) {
 	q.mu.Lock()
-	defer q.mu.Unlock()
-
 	task, exists := q.tasks[id]
 	if !exists {
+		q.mu.Unlock()
 		return
 	}
-
-	wasActive := task.GetStatus() == StatusDownloading
 	task.SetError(errMsg)
-
-	if wasActive {
-		q.activeCount--
+	q.activeCount--
+	if q.activeCount < 0 {
+		q.activeCount = 0
 	}
+	q.mu.Unlock()
 
 	if q.OnTaskError != nil {
 		q.OnTaskError(task)
 	}
+
+	q.mu.Lock()
+	delete(q.tasks, id)
+	q.mu.Unlock()
 
 	q.tryStartNext()
 }

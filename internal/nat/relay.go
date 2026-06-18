@@ -31,6 +31,7 @@ type RelayClient struct {
 	conn       *net.UDPConn
 	serverAddr string
 	stopCh     chan struct{}
+	stopOnce   sync.Once
 	connected  bool
 	relayAddr  string
 }
@@ -177,7 +178,9 @@ func (r *RelayServer) handleClose(clientID string) {
 }
 
 func (r *RelayServer) Stop() {
-	close(r.stopCh)
+	r.stopOnce.Do(func() {
+		close(r.stopCh)
+	})
 	if r.conn != nil {
 		r.conn.Close()
 	}
@@ -312,20 +315,22 @@ func (c *RelayClient) IsConnected() bool {
 }
 
 func (c *RelayClient) Stop() {
-	if c.connected {
-		msg := RelayMessage{
-			Type:     RelayClose,
-			ClientID: c.id,
+	c.stopOnce.Do(func() {
+		if c.connected {
+			msg := RelayMessage{
+				Type:     RelayClose,
+				ClientID: c.id,
+			}
+			data := encodeRelayMessage(msg)
+			serverAddr, _ := net.ResolveUDPAddr("udp", c.serverAddr)
+			c.conn.WriteToUDP(data, serverAddr)
 		}
-		data := encodeRelayMessage(msg)
-		serverAddr, _ := net.ResolveUDPAddr("udp", c.serverAddr)
-		c.conn.WriteToUDP(data, serverAddr)
-	}
 
-	close(c.stopCh)
-	if c.conn != nil {
-		c.conn.Close()
-	}
+		close(c.stopCh)
+		if c.conn != nil {
+			c.conn.Close()
+		}
+	})
 }
 
 func NewRelay() *Relay {

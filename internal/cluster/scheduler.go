@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -48,7 +49,7 @@ func (s *Scheduler) Start() {
 func (s *Scheduler) Stop() {
 	s.cancel()
 	s.wg.Wait()
-	close(s.dispatchChan)
+	// 不关闭 dispatchChan，避免 AfterFunc 回调向已关闭 channel 发送导致 panic
 	s.logger.Infof("Scheduler stopped for node %s", s.localNodeID)
 }
 
@@ -103,13 +104,18 @@ func (s *Scheduler) GetOnlineNodes() []*Node {
 
 func (s *Scheduler) SubmitTask(t *task.Task) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.taskQueue[t.ID] = t
+	s.mu.Unlock()
+
 	select {
 	case s.dispatchChan <- t:
 	case <-s.ctx.Done():
+		s.mu.Lock()
 		delete(s.taskQueue, t.ID)
+		s.mu.Unlock()
 		return fmt.Errorf("scheduler is stopped")
+	default:
+		s.logger.Warnf("Dispatch channel full, task %s will be picked up later", t.ID)
 	}
 	s.logger.Infof("Task %s submitted to scheduler", t.ID)
 	return nil
@@ -141,7 +147,7 @@ func (s *Scheduler) dispatchLoop() {
 }
 
 func (s *Scheduler) dispatchTask(t *task.Task) {
-	targetNode := s.selectNode(t)
+	targetNode := s.selectNode()
 	if targetNode == nil {
 		s.logger.Warnf("No suitable node found for task %s, requeuing", t.ID)
 		time.AfterFunc(5*time.Second, func() {
@@ -166,37 +172,28 @@ func (s *Scheduler) dispatchTask(t *task.Task) {
 	}
 
 	s.logger.Infof("Dispatching task %s to node %s", t.ID, targetNode.ID)
-	t.TargetNode = targetNode.ID
+	t.SetTargetNode(targetNode.ID)
 }
 
-func (s *Scheduler) selectNode(t *task.Task) *Node {
+func (s *Scheduler) selectNode() *Node {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	onlineNodes := make([]*Node, 0)
+	var onlineNodes []*Node
 	for _, node := range s.nodes {
-		if node.ID == s.localNodeID {
-			continue
-		}
 		if node.IsOnline() && node.Load < 80 {
 			onlineNodes = append(onlineNodes, node)
 		}
 	}
-
+	// 不排除本地节点，单节点部署时也能调度
 	if len(onlineNodes) == 0 {
 		return nil
 	}
-
-	var selected *Node
-	minLoad := 100
-	for _, node := range onlineNodes {
-		if node.Load < minLoad {
-			minLoad = node.Load
-			selected = node
-		}
-	}
-
-	return selected
+	// 选择负载最低的节点
+	sort.Slice(onlineNodes, func(i, j int) bool {
+		return onlineNodes[i].Load < onlineNodes[j].Load
+	})
+	return onlineNodes[0]
 }
 
 func (s *Scheduler) GetTaskCount() int {

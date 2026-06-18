@@ -2,10 +2,11 @@ package api
 
 import (
 	"os"
+	"sync/atomic"
 	"syscall"
 )
 
-var gracefulShutdownHandler func(sig syscall.Signal) error
+var gracefulShutdownHandler atomic.Value // 存储 func(syscall.Signal) error
 
 // RegisterGracefulShutdownHandler lets the CLI install a callback that
 // performs a clean shutdown (flush logs, close connections, persist
@@ -13,7 +14,7 @@ var gracefulShutdownHandler func(sig syscall.Signal) error
 // appropriate signal so the rest of the process can run its deferred
 // cleanup instead of being terminated by os.Exit.
 func RegisterGracefulShutdownHandler(fn func(sig syscall.Signal) error) {
-	gracefulShutdownHandler = fn
+	gracefulShutdownHandler.Store(fn)
 }
 
 // requestGracefulShutdown asks the registered handler (if any) to
@@ -22,9 +23,9 @@ func RegisterGracefulShutdownHandler(fn func(sig syscall.Signal) error) {
 // signal.Notify handler can drive the cleanup. Callers should treat
 // this as best-effort and not panic on error.
 func requestGracefulShutdown() error {
-	const sig = syscall.SIGTERM
-	if gracefulShutdownHandler != nil {
-		return gracefulShutdownHandler(sig)
+	sig := syscall.SIGTERM
+	if fn, ok := gracefulShutdownHandler.Load().(func(syscall.Signal) error); ok && fn != nil {
+		return fn(sig)
 	}
 	return procSignal(sig)
 }
@@ -38,5 +39,10 @@ func procSignal(sig syscall.Signal) error {
 	if err != nil {
 		return err
 	}
-	return p.Signal(sig)
+	// Windows 上 SIGTERM 不被支持，使用 os.Interrupt 替代
+	if err := p.Signal(sig); err != nil {
+		// 回退到 os.Interrupt
+		return p.Signal(os.Interrupt)
+	}
+	return nil
 }

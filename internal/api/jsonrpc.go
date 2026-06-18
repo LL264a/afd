@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -683,7 +684,8 @@ func (s *JSONRPCServer) shutdown() (interface{}, error) {
 	go func() {
 		time.Sleep(100 * time.Millisecond)
 		if err := requestGracefulShutdown(); err != nil {
-			s.logger.Warnw("Graceful shutdown request failed; falling back to os.Exit", "err", err)
+			s.logger.Warnw("Graceful shutdown request failed; forcing exit", "err", err)
+			os.Exit(1)
 		}
 	}()
 	return "OK", nil

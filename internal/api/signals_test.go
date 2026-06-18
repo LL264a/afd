@@ -20,7 +20,7 @@ func TestRequestGracefulShutdown_UsesRegisteredHandler(t *testing.T) {
 		return nil
 	})
 	t.Cleanup(func() {
-		gracefulShutdownHandler = nil
+		gracefulShutdownHandler.Store(func(sig syscall.Signal) error { return nil })
 	})
 
 	if err := requestGracefulShutdown(); err != nil {
@@ -37,7 +37,7 @@ func TestRequestGracefulShutdown_UsesRegisteredHandler(t *testing.T) {
 }
 
 func TestRequestGracefulShutdown_NoHandler(t *testing.T) {
-	gracefulShutdownHandler = nil
+	gracefulShutdownHandler.Store(func(sig syscall.Signal) error { return nil })
 	err := requestGracefulShutdown()
 	if err == nil {
 		t.Skip("running in environment that allows self-signaling; got nil error which is fine")
@@ -55,7 +55,7 @@ func TestRegisterGracefulShutdownHandler_OverridesPrevious(t *testing.T) {
 		return nil
 	})
 	t.Cleanup(func() {
-		gracefulShutdownHandler = nil
+		gracefulShutdownHandler.Store(func(sig syscall.Signal) error { return nil })
 	})
 
 	if err := requestGracefulShutdown(); err != nil {

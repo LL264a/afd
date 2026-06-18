@@ -83,7 +83,8 @@ func (s *ControlFileStore) Save(taskID string, cf *ControlFile) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, err := s.dir(); err != nil {
+	dir, err := s.dir()
+	if err != nil {
 		return err
 	}
 
@@ -97,7 +98,36 @@ func (s *ControlFileStore) Save(taskID string, cf *ControlFile) error {
 		return fmt.Errorf("failed to marshal control file for task %s: %w", taskID, err)
 	}
 
-	return os.WriteFile(s.filePath(taskID), data, 0644)
+	dst := s.filePath(taskID)
+	tmp, err := os.CreateTemp(dir, filepath.Base(dst)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file for task %s: %w", taskID, err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // 清理未 rename 的 temp 文件
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to write temp file for task %s: %w", taskID, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to fsync temp file for task %s: %w", taskID, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file for task %s: %w", taskID, err)
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		return fmt.Errorf("failed to rename temp file for task %s: %w", taskID, err)
+	}
+
+	// fsync 目录确保 rename 持久化
+	if d, err := os.Open(dir); err == nil {
+		d.Sync()
+		d.Close()
+	}
+
+	return nil
 }
 
 func (s *ControlFileStore) Load(taskID string) (*ControlFile, error) {

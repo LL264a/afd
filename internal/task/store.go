@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/nexus-dl/afd/pkg/logger"
 )
 
 type TaskStore struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	dataDir string
 }
 
@@ -78,12 +80,18 @@ func (s *TaskStore) Save(task *Task) error {
 		return fmt.Errorf("failed to rename task %s: %w", task.ID, err)
 	}
 
+	// fsync 目录确保 rename 持久化
+	if d, err := os.Open(s.dataDir); err == nil {
+		d.Sync()
+		d.Close()
+	}
+
 	return nil
 }
 
 func (s *TaskStore) Load(id string) (*Task, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	path := s.taskPath(id)
 	data, err := os.ReadFile(path)
@@ -106,8 +114,8 @@ func (s *TaskStore) Load(id string) (*Task, error) {
 }
 
 func (s *TaskStore) LoadAll() ([]*Task, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	if _, err := s.dir(); err != nil {
 		return nil, err
@@ -130,11 +138,17 @@ func (s *TaskStore) LoadAll() ([]*Task, error) {
 		path := filepath.Join(s.dataDir, entry.Name())
 		data, err := os.ReadFile(path)
 		if err != nil {
+			if logger.Log != nil {
+				logger.Log.Warnw("failed to read task file", "path", path, "error", err)
+			}
 			continue
 		}
 
 		var task Task
 		if err := json.Unmarshal(data, &task); err != nil {
+			if logger.Log != nil {
+				logger.Log.Warnw("failed to parse task file", "path", path, "error", err)
+			}
 			continue
 		}
 
