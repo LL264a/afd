@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	mrand "math/rand"
 	"sync"
 	"time"
 )
@@ -29,6 +30,10 @@ func GenerateID() string {
 		ts := time.Now().UnixNano()
 		for i := 0; i < 8 && i < len(b); i++ {
 			b[i] = byte(ts >> (8 * i))
+		}
+		// 用 math/rand 填充剩余字节，补充熵源
+		for i := 8; i < len(b); i++ {
+			b[i] = byte(mrand.Intn(256))
 		}
 	}
 	b[6] = (b[6] & 0x0f) | 0x40

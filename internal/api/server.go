@@ -43,6 +43,11 @@ type CreateTaskRequest struct {
 	Metadata   map[string]string `json:"metadata"`
 }
 
+type UpdateTaskRequest struct {
+	Priority *int              `json:"priority,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
 type TaskResponse struct {
 	Task *task.Task `json:"task"`
 }
@@ -391,7 +396,9 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request, id string) {
 	}
 
 	s.taskStore.Delete(id)
-	s.hub.BroadcastTaskUpdate(nil)
+	// 广播删除事件（使用一个包含 ID 的最小 Task 对象）
+	deletedTask := &task.Task{ID: id}
+	s.hub.BroadcastTaskUpdate(deletedTask)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -562,6 +569,20 @@ func (s *Server) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// cloneConfig 通过序列化/反序列化实现 config 的深拷贝，确保回滚时
+// 指针字段和切片字段不会与新配置共享底层数据。
+func cloneConfig(c *config.Config) (*config.Config, error) {
+	data, err := json.Marshal(c)
+	if err != nil {
+		return nil, err
+	}
+	var clone config.Config
+	if err := json.Unmarshal(data, &clone); err != nil {
+		return nil, err
+	}
+	return &clone, nil
+}
+
 func (s *Server) handleReloadConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		sendError(w, http.StatusMethodNotAllowed, "Method not allowed", "")
@@ -581,8 +602,14 @@ func (s *Server) handleReloadConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 深拷贝当前配置作为备份，避免浅拷贝导致回滚不完整
+	oldConfig, err := cloneConfig(s.config)
+	if err != nil {
+		sendError(w, http.StatusInternalServerError, "failed to backup config", "")
+		return
+	}
+
 	s.mu.Lock()
-	oldConfig := *s.config
 	*s.config = *newConfig
 	s.mu.Unlock()
 
@@ -599,7 +626,7 @@ func (s *Server) handleReloadConfig(w http.ResponseWriter, r *http.Request) {
 		if err := logger.Init(newConfig.Node.LogLevel, ""); err != nil {
 			logger.Log.Warnw("Failed to update log level after config reload", "error", err)
 			s.mu.Lock()
-			*s.config = oldConfig
+			*s.config = *oldConfig
 			s.mu.Unlock()
 			sendError(w, http.StatusInternalServerError, "Failed to apply new log level", err.Error())
 			return

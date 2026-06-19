@@ -18,10 +18,11 @@ type FailoverConfig struct {
 }
 
 type FailedNode struct {
-	NodeID     string
-	FailedAt   time.Time
-	RetryCount int
-	Tasks      []string
+	NodeID            string
+	FailedAt          time.Time
+	RetryCount        int
+	Tasks             []string
+	reassignScheduled bool
 }
 
 type Failover struct {
@@ -157,18 +158,23 @@ func (f *Failover) handleNodeFailure(nodeID string) []string {
 		return tasksToReassign
 	}
 
-	f.logger.Infof("Scheduling task reassignment for node %s in %v", nodeID, f.config.ReassignDelay)
-	tasksToReassign := failed.Tasks
-	time.AfterFunc(f.config.ReassignDelay, func() {
-		// Bail out if the failover has been stopped; otherwise we
-		// do wasted work and may touch a torn-down scheduler.
-		select {
-		case <-f.ctx.Done():
-			return
-		default:
-		}
-		f.reassignTasks(tasksToReassign)
-	})
+	if !failed.reassignScheduled {
+		failed.reassignScheduled = true
+		f.logger.Infof("Scheduling task reassignment for node %s in %v", nodeID, f.config.ReassignDelay)
+		tasksToReassign := failed.Tasks
+		time.AfterFunc(f.config.ReassignDelay, func() {
+			// Bail out if the failover has been stopped; otherwise we
+			// do wasted work and may touch a torn-down scheduler.
+			select {
+			case <-f.ctx.Done():
+				return
+			default:
+			}
+			f.reassignTasks(tasksToReassign)
+		})
+	} else {
+		f.logger.Debugf("Node %s still failing (retry %d), AfterFunc already scheduled", nodeID, failed.RetryCount)
+	}
 	return nil
 }
 

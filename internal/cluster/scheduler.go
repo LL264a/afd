@@ -173,6 +173,9 @@ func (s *Scheduler) dispatchTask(t *task.Task) {
 
 	s.logger.Infof("Dispatching task %s to node %s", t.ID, targetNode.ID)
 	t.SetTargetNode(targetNode.ID)
+	// TODO: 实际投递任务到目标节点（需要 gRPC 调用）
+	// 当前仅标记 TargetNode，依赖外部组件轮询
+	s.logger.Warnf("Task %s assigned to node %s but not dispatched (requires external dispatcher)", t.ID, targetNode.ID)
 }
 
 func (s *Scheduler) selectNode() *Node {
@@ -181,7 +184,7 @@ func (s *Scheduler) selectNode() *Node {
 
 	var onlineNodes []*Node
 	for _, node := range s.nodes {
-		if node.IsOnline() && node.Load < 80 {
+		if node.IsOnline() && node.GetLoad() < 80 {
 			onlineNodes = append(onlineNodes, node)
 		}
 	}
@@ -191,7 +194,7 @@ func (s *Scheduler) selectNode() *Node {
 	}
 	// 选择负载最低的节点
 	sort.Slice(onlineNodes, func(i, j int) bool {
-		return onlineNodes[i].Load < onlineNodes[j].Load
+		return onlineNodes[i].GetLoad() < onlineNodes[j].GetLoad()
 	})
 	return onlineNodes[0]
 }
@@ -217,12 +220,12 @@ func (s *Scheduler) Rebalance() {
 	}
 
 	totalTasks := len(s.taskQueue)
-	avgTasks := totalTasks / len(onlineNodes)
+	avgTasks := float64(totalTasks) / float64(len(onlineNodes))
 
 	for _, node := range onlineNodes {
 		currentTasks := s.countTasksForNode(node.ID)
-		if currentTasks > avgTasks+2 {
-			excess := currentTasks - avgTasks
+		if currentTasks > int(avgTasks)+2 {
+			excess := currentTasks - int(avgTasks)
 			s.reassignTasks(node.ID, excess, onlineNodes)
 		}
 	}

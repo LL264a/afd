@@ -176,8 +176,6 @@ func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downl
 		diskCache:    NewDiskCache(),
 	}
 
-	d.loadCookies()
-
 	return d
 }
 
@@ -253,6 +251,7 @@ func NewDownloaderFromURL(url, outputPath string, cfg *config.DownloadConfig, lo
 
 func (d *Downloader) SetURL(url string) {
 	d.url = url
+	d.loadCookies()
 }
 
 func (d *Downloader) SetOutputPath(path string) {
@@ -500,7 +499,8 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 				"completed_pieces", completedPieces,
 			)
 		} else {
-			// 回退到 CompletedLength 粗略恢复
+			// 没有 Block 级位图，只恢复完整 piece，部分 piece 从头下载
+			// （多线程下载不保证顺序，不能假设前 N 个 block 已完成）
 			for _, p := range pieces {
 				pieceEnd := p.Start + p.Length
 				if resumeCompleted >= pieceEnd {
@@ -510,22 +510,10 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 					}
 					pm.CompletePiece(p.Index)
 					atomic.AddInt64(&d.totalDownloaded, p.Length)
-				} else if resumeCompleted > p.Start {
-					completedInPiece := resumeCompleted - p.Start
-					if completedInPiece > p.Length {
-						completedInPiece = p.Length
-					}
-					completedBlocks := int(completedInPiece / DefaultBlockLength)
-					for i := 0; i < completedBlocks && i < p.blocks.NumBlocks(); i++ {
-						p.CompleteBlock(i)
-					}
-					atomic.AddInt64(&d.totalDownloaded, completedInPiece)
-					if p.IsComplete() {
-						pm.CompletePiece(p.Index)
-					}
 				}
+				// 部分 piece 不标记任何 block，从头下载
 			}
-			d.logger.Infow("resumed progress from completed length",
+			d.logger.Infow("resumed progress from completed length (conservative mode, partial pieces re-downloaded)",
 				"completed_length", resumeCompleted,
 				"total_pieces", len(pieces),
 			)
@@ -852,7 +840,6 @@ func (d *Downloader) getSizeViaGet(ctx context.Context) (int64, bool, error) {
 		return 0, false, fmt.Errorf("get request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode == http.StatusPartialContent {
 		contentRange := resp.Header.Get("Content-Range")
@@ -905,7 +892,7 @@ func (d *Downloader) downloadChunk(ctx context.Context, file *os.File, chunk *Ch
 
 	var lastErr error
 	for _, downloadURL := range urls {
-		for retry := 0; retry <= d.cfg.RetryCount; retry++ {
+		for retry := 0; retry <= d.retryConfig.MaxRetries; retry++ {
 			if retry > 0 {
 				select {
 				case <-ctx.Done():
@@ -1033,7 +1020,7 @@ func (d *Downloader) downloadPiece(ctx context.Context, file *os.File, piece *Pi
 
 	var lastErr error
 	for _, downloadURL := range urls {
-		for retry := 0; retry <= d.cfg.RetryCount; retry++ {
+		for retry := 0; retry <= d.retryConfig.MaxRetries; retry++ {
 			if retry > 0 {
 				select {
 				case <-ctx.Done():
@@ -1103,7 +1090,11 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 				return nil
 			}
 			// 所有 block 都被占用但未完成，短暂等待后重试
-			time.Sleep(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+			}
 			continue
 		}
 
@@ -1220,17 +1211,24 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 					}
 
 					// 获取下一个 block
-					nextOffset, nextLength := piece.NextUnusedBlock()
-					if nextOffset < 0 {
-						// 没有更多 block 可获取，但 piece 未完成（其他 goroutine 在下载剩余 block）
-						resp.Body.Close()
-						return nil
-					}
+				nextOffset, nextLength := piece.NextUnusedBlock()
+				if nextOffset < 0 {
+					// 没有更多 block 可获取，但 piece 未完成（其他 goroutine 在下载剩余 block）
+					resp.Body.Close()
+					return nil
+				}
 
-					currentBlockIdx = piece.BlockIndexForOffset(nextOffset)
-					remainingInBlock = nextLength
-					// 注意：我们继续读取同一 HTTP 响应的数据，写入下一个 block 的位置
-					// 因为 Range 请求可能返回超出当前 block 的数据（动态 endOffset）
+				// 如果下一个 block 的偏移量与当前写入位置不连续，不能继续用同一 HTTP 响应
+				// 否则数据会写错位置（P0 数据损坏）
+				if nextOffset != currentOffset {
+					resp.Body.Close()
+					return nil
+				}
+
+				currentBlockIdx = piece.BlockIndexForOffset(nextOffset)
+				remainingInBlock = nextLength
+				// 注意：我们继续读取同一 HTTP 响应的数据，写入下一个 block 的位置
+				// 因为 Range 请求可能返回超出当前 block 的数据（动态 endOffset）
 				}
 			}
 
@@ -1269,7 +1267,7 @@ func (d *Downloader) downloadRange(ctx context.Context, file *os.File, start, en
 
 	var lastErr error
 	for _, downloadURL := range urls {
-		for retry := 0; retry <= d.cfg.RetryCount; retry++ {
+		for retry := 0; retry <= d.retryConfig.MaxRetries; retry++ {
 			if retry > 0 {
 				select {
 				case <-ctx.Done():
@@ -1360,12 +1358,15 @@ func (d *Downloader) downloadRangeOnceFromURL(ctx context.Context, file *os.File
 				d.SaveProgress()
 			}
 
-			// 标记对应 block 为完成
-			blockIdx := piece.BlockIndexForOffset(currentOffset - written)
-			blockStart := piece.Start + int64(blockIdx)*DefaultBlockLength
-			blockEnd := blockStart + piece.blocks.BlockLength(blockIdx)
-			if currentOffset >= blockEnd {
-				piece.CompleteBlock(blockIdx)
+			// 标记本次写入涉及的所有 block 为完成
+			writeStart := currentOffset - written
+			writeEnd := currentOffset - 1
+			if writeEnd >= writeStart {
+				startBlock := piece.BlockIndexForOffset(writeStart)
+				endBlock := piece.BlockIndexForOffset(writeEnd)
+				for i := startBlock; i <= endBlock; i++ {
+					piece.CompleteBlock(i)
+				}
 			}
 		}
 
@@ -1624,6 +1625,14 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 		if err := os.Remove(d.outputPath); err != nil {
 			return fmt.Errorf("remove partial file: %w", err)
 		}
+		// 重置进度，避免无限递归
+		d.cfMu.Lock()
+		if d.controlFile != nil {
+			d.controlFile.CompletedLength = 0
+			d.controlFile.PieceBitfields = nil
+		}
+		d.cfMu.Unlock()
+		atomic.StoreInt64(&d.totalDownloaded, 0)
 		return d.singleThreadDownload(ctx)
 	}
 

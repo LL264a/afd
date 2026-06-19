@@ -132,7 +132,7 @@ func (h *TaskHandler) UpdateTask(w http.ResponseWriter, r *http.Request, id stri
 	const maxBodySize = 1 << 20 // 1 MiB
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 
-	var req CreateTaskRequest
+	var req UpdateTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendError(w, http.StatusBadRequest, "Invalid request body", err.Error())
 		return
@@ -144,8 +144,13 @@ func (h *TaskHandler) UpdateTask(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 
-	if req.Priority != 0 {
-		t.SetPriority(req.Priority)
+	if req.Priority != nil {
+		p := *req.Priority
+		if p < 0 || p > 10 {
+			sendError(w, http.StatusBadRequest, "Priority must be between 0 and 10", "")
+			return
+		}
+		t.SetPriority(p)
 	}
 
 	if req.Metadata != nil {
@@ -166,7 +171,9 @@ func (h *TaskHandler) DeleteTask(w http.ResponseWriter, r *http.Request, id stri
 	}
 
 	h.taskStore.Delete(id)
-	h.hub.BroadcastTaskUpdate(nil)
+	// 广播删除事件（使用一个包含 ID 的最小 Task 对象）
+	deletedTask := &task.Task{ID: id}
+	h.hub.BroadcastTaskUpdate(deletedTask)
 
 	w.WriteHeader(http.StatusNoContent)
 }

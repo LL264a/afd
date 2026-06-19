@@ -78,7 +78,7 @@ func (m *Membership) AddMember(node Node) {
 		existing.Addr = node.Addr
 		existing.GRPCPort = node.GRPCPort
 		existing.APIPort = node.APIPort
-		existing.Load = node.Load
+		existing.SetLoad(node.Load)
 		existing.Tags = node.Tags
 		existing.UpdateSeen()
 		m.mu.Unlock()

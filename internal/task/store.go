@@ -131,7 +131,20 @@ func (s *TaskStore) LoadAll() ([]*Task, error) {
 
 	var tasks []*Task
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+		if entry.IsDir() {
+			continue
+		}
+		// 清理残留的 temp 文件
+		if filepath.Ext(entry.Name()) == ".tmp" {
+			tmpPath := filepath.Join(s.dataDir, entry.Name())
+			if err := os.Remove(tmpPath); err != nil {
+				if logger.Log != nil {
+					logger.Log.Warnw("failed to remove stale temp file", "path", tmpPath, "error", err)
+				}
+			}
+			continue
+		}
+		if filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
 

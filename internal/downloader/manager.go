@@ -97,6 +97,14 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// 检查是否正在关闭
+	select {
+	case <-m.stopCh:
+		logger.Log.Warnw("DownloadManager is stopping, rejecting new download", "task_id", t.ID)
+		return
+	default:
+	}
+
 	if _, exists := m.active[t.ID]; exists {
 		logger.Log.Warnw("Download already active", "task_id", t.ID)
 		return
