@@ -24,7 +24,6 @@ type Node struct {
 	Load     int               `json:"load"`
 	Tags     map[string]string `json:"tags"`
 	LastSeen time.Time         `json:"last_seen"`
-	mu       sync.RWMutex      `json:"-"`
 }
 
 type NodeInfo struct {
@@ -33,9 +32,9 @@ type NodeInfo struct {
 	Version   string    `json:"version"`
 }
 
+// IsOnline 返回节点是否在线。
+// 线程安全：调用方必须持有保护该 Node 的外部锁（如 Membership.mu 或 Scheduler.mu）。
 func (n *Node) IsOnline() bool {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
 	return n.Status == StatusOnline
 }
 
@@ -44,33 +43,23 @@ func (n *Node) FullAddr() string {
 }
 
 func (n *Node) UpdateSeen() {
-	n.mu.Lock()
-	defer n.mu.Unlock()
 	n.LastSeen = time.Now()
 	n.Status = StatusOnline
 }
 
 func (n *Node) MarkOffline() {
-	n.mu.Lock()
-	defer n.mu.Unlock()
 	n.Status = StatusOffline
 }
 
 func (n *Node) GetLoad() int {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
 	return n.Load
 }
 
 func (n *Node) SetLoad(load int) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
 	n.Load = load
 }
 
 func (n *Node) GetStatus() NodeStatus {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
 	return n.Status
 }
 
