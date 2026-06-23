@@ -328,3 +328,112 @@ func (q *TaskQueue) NotifyProgress(task *Task) {
 		q.OnTaskProgress(task)
 	}
 }
+
+// PurgeStopped removes all tasks with Done/Failed/Cancelled status from
+// the queue and returns the number of removed tasks.
+func (q *TaskQueue) PurgeStopped() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	count := 0
+	for id, t := range q.tasks {
+		st := t.GetStatus()
+		if st == StatusDone || st == StatusFailed || st == StatusCancelled {
+			delete(q.tasks, id)
+			if idx := findPQIndex(q.pq, id); idx >= 0 {
+				heap.Remove(&q.pq, idx)
+			}
+			count++
+		}
+	}
+	return count
+}
+
+// RemoveStopped removes a single stopped (Done/Failed/Cancelled) task from
+// the queue. Returns an error if the task is not found or still active.
+func (q *TaskQueue) RemoveStopped(id string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	task, exists := q.tasks[id]
+	if !exists {
+		return fmt.Errorf("task %s not found", id)
+	}
+	st := task.GetStatus()
+	if st == StatusDownloading || st == StatusPending {
+		return fmt.Errorf("task %s is still active", id)
+	}
+	if st == StatusPaused {
+		return fmt.Errorf("task %s is paused, cannot remove as download result", id)
+	}
+	delete(q.tasks, id)
+	if idx := findPQIndex(q.pq, id); idx >= 0 {
+		heap.Remove(&q.pq, idx)
+	}
+	return nil
+}
+
+// MaxConcurrent returns the current maximum concurrent download limit.
+func (q *TaskQueue) MaxConcurrent() int {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	return q.maxConcurrent
+}
+
+// ChangePosition adjusts the position of a waiting task in the queue.
+// how can be "POS_SET" (absolute), "POS_CUR" (relative to current), or
+// "POS_END" (relative to end). Returns the new position.
+// Note: since the queue is priority-based, this currently returns the
+// computed position without truly reordering the heap.
+func (q *TaskQueue) ChangePosition(id string, pos int, how string) (int, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	task, exists := q.tasks[id]
+	if !exists {
+		return 0, fmt.Errorf("task %s not found", id)
+	}
+	if task.GetStatus() != StatusPending {
+		return 0, fmt.Errorf("task %s is not in waiting queue", id)
+	}
+
+	// Build a snapshot of waiting tasks to compute positions
+	waiting := make([]*Task, 0)
+	for _, t := range q.tasks {
+		if t.GetStatus() == StatusPending {
+			waiting = append(waiting, t)
+		}
+	}
+
+	curPos := -1
+	for i, t := range waiting {
+		if t.ID == id {
+			curPos = i
+			break
+		}
+	}
+	if curPos < 0 {
+		return 0, fmt.Errorf("task %s not found in waiting queue", id)
+	}
+
+	newPos := pos
+	switch how {
+	case "POS_SET":
+		newPos = pos
+	case "POS_CUR":
+		newPos = curPos + pos
+	case "POS_END":
+		newPos = len(waiting) - 1 + pos
+	default:
+		return 0, fmt.Errorf("invalid how parameter: %s", how)
+	}
+
+	if newPos < 0 {
+		newPos = 0
+	}
+	if newPos >= len(waiting) {
+		newPos = len(waiting) - 1
+	}
+
+	// TODO: adjust task priorities to truly reflect the new position.
+	// The priority queue orders by Priority field, so a true reorder
+	// would require recalculating priorities for all waiting tasks.
+	return newPos, nil
+}

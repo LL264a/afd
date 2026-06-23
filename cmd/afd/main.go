@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -10,7 +13,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nexus-dl/afd/internal/api"
+	"github.com/nexus-dl/afd/internal/cluster"
 	"github.com/nexus-dl/afd/internal/downloader"
+	"github.com/nexus-dl/afd/internal/task"
 	"github.com/nexus-dl/afd/pkg/config"
 	"github.com/nexus-dl/afd/pkg/logger"
 	"github.com/spf13/cobra"
@@ -21,6 +27,8 @@ var (
 	Commit    = "unknown"
 	BuildTime = "unknown"
 	cfgFile   string
+	rpcAddr   string
+	rpcToken  string
 )
 
 var rootCmd = &cobra.Command{
@@ -58,9 +66,7 @@ var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "启动 AFD 服务",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		printBanner()
-		fmt.Println("服务功能开发中，请使用 download 命令直接下载")
-		return nil
+		return runServe()
 	},
 }
 
@@ -69,8 +75,7 @@ var addCmd = &cobra.Command{
 	Short: "添加下载任务 (需要先启动服务)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("请先使用 'afd serve' 启动服务，然后通过 API 添加任务")
-		return nil
+		return runAdd(args[0])
 	},
 }
 
@@ -78,8 +83,7 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "列出所有任务 (需要先启动服务)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("请先使用 'afd serve' 启动服务")
-		return nil
+		return runList()
 	},
 }
 
@@ -88,8 +92,7 @@ var pauseCmd = &cobra.Command{
 	Short: "暂停任务 (需要先启动服务)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("请先使用 'afd serve' 启动服务")
-		return nil
+		return runPause(args[0])
 	},
 }
 
@@ -98,8 +101,7 @@ var resumeCmd = &cobra.Command{
 	Short: "恢复任务 (需要先启动服务)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("请先使用 'afd serve' 启动服务")
-		return nil
+		return runResume(args[0])
 	},
 }
 
@@ -108,8 +110,7 @@ var removeCmd = &cobra.Command{
 	Short: "删除任务 (需要先启动服务)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("请先使用 'afd serve' 启动服务")
-		return nil
+		return runRemove(args[0])
 	},
 }
 
@@ -117,8 +118,7 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "查看集群状态 (需要先启动服务)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("请先使用 'afd serve' 启动服务")
-		return nil
+		return runStatus()
 	},
 }
 
@@ -405,8 +405,240 @@ func formatBytes(n int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
+// --- RPC client and command implementations ---
+
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+type rpcResponse struct {
+	Result json.RawMessage `json:"result"`
+	Error  *rpcError       `json:"error"`
+}
+
+type rpcClient struct {
+	addr  string
+	token string
+	http  *http.Client
+}
+
+func newRPCClient(addr, token string) *rpcClient {
+	if addr == "" {
+		addr = "http://localhost:6800/jsonrpc"
+	}
+	return &rpcClient{
+		addr:  addr,
+		token: token,
+		http:  &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+func (c *rpcClient) call(method string, params []interface{}) (json.RawMessage, error) {
+	reqBody := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  method,
+		"params":  params,
+		"id":      "1",
+	}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("编码请求失败: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, c.addr, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("连接 RPC 服务器失败: %w", err)
+	}
+	defer resp.Body.Close()
+	var rpcResp rpcResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+		return nil, fmt.Errorf("解析响应失败: %w", err)
+	}
+	if rpcResp.Error != nil {
+		return nil, fmt.Errorf("RPC 错误 %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
+	}
+	return rpcResp.Result, nil
+}
+
+func runServe() error {
+	printBanner()
+
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		return fmt.Errorf("加载配置失败: %w", err)
+	}
+
+	if err := logger.Init(cfg.Node.LogLevel, ""); err != nil {
+		return fmt.Errorf("初始化日志失败: %w", err)
+	}
+	defer logger.Log.Sync()
+
+	taskQueue := task.NewTaskQueue(cfg.Download.MaxConnections)
+	taskStore := task.NewTaskStore(cfg.Node.DataDir)
+	localNode := cluster.NewLocalNode(cfg.Node.ID, cfg.Node.Name, 0, cfg.API.Port, nil)
+	membership := cluster.NewMembership(cfg.Node.ID)
+	hub := api.NewWebSocketHub()
+	hub.SetTaskQueue(taskQueue)
+	hub.SetMembership(membership)
+	hub.SetLocalNode(localNode)
+	go hub.Run()
+
+	srv := api.NewServer(cfg, taskQueue, taskStore, membership, localNode, hub, Version)
+
+	api.RegisterGracefulShutdownHandler(func(sig syscall.Signal) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return srv.Shutdown(ctx)
+	})
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		if logger.Log != nil {
+			logger.Log.Infow("收到信号，正在关闭", "signal", sig)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	logger.Log.Infow("启动 API 服务器", "addr", srv.Addr)
+	fmt.Printf("RPC  地址: http://%s/jsonrpc\n", srv.Addr)
+	fmt.Printf("XML-RPC 地址: http://%s/xmlrpc\n", srv.Addr)
+	fmt.Println(strings.Repeat("=", 50))
+
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("服务器错误: %w", err)
+	}
+
+	return nil
+}
+
+func runAdd(url string) error {
+	client := newRPCClient(rpcAddr, rpcToken)
+	result, err := client.call("aria2.addUri", []interface{}{[]string{url}})
+	if err != nil {
+		return err
+	}
+	var gids []string
+	if err := json.Unmarshal(result, &gids); err != nil {
+		var gid string
+		if err2 := json.Unmarshal(result, &gid); err2 != nil {
+			return fmt.Errorf("意外的响应: %s", string(result))
+		}
+		fmt.Printf("已添加任务: %s\n", gid)
+		return nil
+	}
+	for _, gid := range gids {
+		fmt.Printf("已添加任务: %s\n", gid)
+	}
+	return nil
+}
+
+func runList() error {
+	client := newRPCClient(rpcAddr, rpcToken)
+	fmt.Printf("%-36s %-12s %-20s %s\n", "GID", "状态", "进度", "速度")
+	fmt.Println(strings.Repeat("-", 80))
+
+	for _, method := range []string{"aria2.tellActive", "aria2.tellWaiting", "aria2.tellStopped"} {
+		var params []interface{}
+		if method == "aria2.tellWaiting" || method == "aria2.tellStopped" {
+			params = []interface{}{0, 1000}
+		}
+		result, err := client.call(method, params)
+		if err != nil {
+			return err
+		}
+		var tasks []map[string]interface{}
+		if err := json.Unmarshal(result, &tasks); err != nil {
+			continue
+		}
+		for _, t := range tasks {
+			gid, _ := t["gid"].(string)
+			status, _ := t["status"].(string)
+			completed, _ := t["completedLength"].(string)
+			total, _ := t["totalLength"].(string)
+			speed, _ := t["downloadSpeed"].(string)
+			progress := completed + "/" + total
+			fmt.Printf("%-36s %-12s %-20s %s B/s\n", gid, status, progress, speed)
+		}
+	}
+	return nil
+}
+
+func runPause(gid string) error {
+	client := newRPCClient(rpcAddr, rpcToken)
+	if _, err := client.call("aria2.pause", []interface{}{gid}); err != nil {
+		return err
+	}
+	fmt.Printf("已暂停任务: %s\n", gid)
+	return nil
+}
+
+func runResume(gid string) error {
+	client := newRPCClient(rpcAddr, rpcToken)
+	if _, err := client.call("aria2.unpause", []interface{}{gid}); err != nil {
+		return err
+	}
+	fmt.Printf("已恢复任务: %s\n", gid)
+	return nil
+}
+
+func runRemove(gid string) error {
+	client := newRPCClient(rpcAddr, rpcToken)
+	if _, err := client.call("aria2.remove", []interface{}{gid}); err != nil {
+		return err
+	}
+	fmt.Printf("已删除任务: %s\n", gid)
+	return nil
+}
+
+func runStatus() error {
+	client := newRPCClient(rpcAddr, rpcToken)
+	result, err := client.call("aria2.getGlobalStat", []interface{}{})
+	if err != nil {
+		return err
+	}
+	var stat map[string]interface{}
+	if err := json.Unmarshal(result, &stat); err != nil {
+		return fmt.Errorf("意外的响应: %s", string(result))
+	}
+	fmt.Println("=== 全局状态 ===")
+	fmt.Printf("下载速度: %s B/s\n", toString(stat["downloadSpeed"]))
+	fmt.Printf("上传速度: %s B/s\n", toString(stat["uploadSpeed"]))
+	fmt.Printf("活动任务: %s\n", toString(stat["numActive"]))
+	fmt.Printf("等待任务: %s\n", toString(stat["numWaiting"]))
+	fmt.Printf("已完成:   %s\n", toString(stat["numStopped"]))
+	return nil
+}
+
+func toString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	switch x := v.(type) {
+	case string:
+		return x
+	case float64:
+		return fmt.Sprintf("%d", int64(x))
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "配置文件路径")
+	rootCmd.PersistentFlags().StringVar(&rpcAddr, "addr", "http://localhost:6800/jsonrpc", "RPC 服务器地址")
+	rootCmd.PersistentFlags().StringVar(&rpcToken, "token", "", "RPC 认证 token")
 
 	rootCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(addCmd)

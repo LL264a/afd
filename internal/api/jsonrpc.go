@@ -308,6 +308,48 @@ func paramKeys(params []interface{}, idx int) []string {
 	return paramStringSlice(params, idx)
 }
 
+// parseSpeedLimit parses an aria2-style speed limit string (e.g. "1M", "500K",
+// "0") into bytes per second.
+func parseSpeedLimit(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0" {
+		return 0, nil
+	}
+	multiplier := int64(1)
+	last := s[len(s)-1]
+	switch last {
+	case 'K', 'k':
+		multiplier = 1024
+		s = s[:len(s)-1]
+	case 'M', 'm':
+		multiplier = 1024 * 1024
+		s = s[:len(s)-1]
+	case 'G', 'g':
+		multiplier = 1024 * 1024 * 1024
+		s = s[:len(s)-1]
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return n * multiplier, nil
+}
+
+// formatSpeedLimit formats a bytes-per-second value into a human-readable
+// aria2-style speed limit string (e.g. "1M", "500K", "0").
+func formatSpeedLimit(n int64) string {
+	if n <= 0 {
+		return "0"
+	}
+	if n%(1024*1024) == 0 {
+		return fmt.Sprintf("%dM", n/(1024*1024))
+	}
+	if n%1024 == 0 {
+		return fmt.Sprintf("%dK", n/1024)
+	}
+	return fmt.Sprintf("%d", n)
+}
+
 func (s *JSONRPCServer) addUri(params []interface{}) (interface{}, error) {
 	uris := paramStringSlice(params, 0)
 	if len(uris) == 0 {
@@ -390,7 +432,9 @@ func (s *JSONRPCServer) remove(params []interface{}) (interface{}, error) {
 	if err := s.taskQueue.Remove(gid); err != nil {
 		return nil, newJSONRPCError(-1, err)
 	}
-	_ = s.taskStore.Delete(gid)
+	if s.taskStore != nil {
+		_ = s.taskStore.Delete(gid)
+	}
 	return gid, nil
 }
 
@@ -574,15 +618,94 @@ func (s *JSONRPCServer) getUris(params []interface{}) (interface{}, error) {
 }
 
 func (s *JSONRPCServer) changeGlobalOption(params []interface{}) (interface{}, error) {
-	return nil, newJSONRPCError(-32603, fmt.Errorf("changeGlobalOption not yet implemented"))
+	options := paramMap(params, 0)
+	if options == nil {
+		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing options parameter"))
+	}
+	if s.config == nil {
+		return nil, newJSONRPCError(-1, fmt.Errorf("Config not available"))
+	}
+	for k, v := range options {
+		strVal, ok := v.(string)
+		if !ok {
+			continue
+		}
+		switch k {
+		case "max-concurrent-downloads":
+			n, err := strconv.Atoi(strVal)
+			if err != nil || n < 1 {
+				return nil, newJSONRPCError(-1, fmt.Errorf("Invalid max-concurrent-downloads: %s", strVal))
+			}
+			s.taskQueue.SetMaxConcurrent(n)
+		case "max-overall-download-limit":
+			limit, err := parseSpeedLimit(strVal)
+			if err != nil {
+				return nil, newJSONRPCError(-1, fmt.Errorf("Invalid max-overall-download-limit: %s", strVal))
+			}
+			s.config.Download.SpeedLimit = limit
+		case "max-download-limit":
+			limit, err := parseSpeedLimit(strVal)
+			if err != nil {
+				return nil, newJSONRPCError(-1, fmt.Errorf("Invalid max-download-limit: %s", strVal))
+			}
+			s.config.Download.SpeedLimit = limit
+		case "log-level":
+			s.config.Node.LogLevel = strVal
+		case "dir":
+			if isSafePath(strVal) {
+				s.config.Node.DataDir = strVal
+			}
+		default:
+			// Ignore unknown options for forward compatibility
+		}
+	}
+	return "OK", nil
 }
 
 func (s *JSONRPCServer) changeOption(params []interface{}) (interface{}, error) {
-	return nil, newJSONRPCError(-32603, fmt.Errorf("changeOption not yet implemented"))
+	gid := paramString(params, 0)
+	if gid == "" {
+		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
+	}
+	options := paramMap(params, 1)
+	if options == nil {
+		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing options parameter"))
+	}
+	t, err := s.taskQueue.Get(gid)
+	if err != nil {
+		return nil, newJSONRPCError(-1, fmt.Errorf("Task not found: %s", gid))
+	}
+	if err := s.applyOptions(t, options); err != nil {
+		return nil, newJSONRPCError(-1, err)
+	}
+	// Support max-download-limit via metadata (no dedicated field on Task)
+	if v, ok := options["max-download-limit"]; ok {
+		if str, ok := v.(string); ok {
+			if t.Metadata == nil {
+				t.Metadata = make(map[string]string)
+			}
+			t.Metadata["max-download-limit"] = str
+		}
+	}
+	s.persistTask(t)
+	return "OK", nil
 }
 
 func (s *JSONRPCServer) getGlobalOption(_ []interface{}) (interface{}, error) {
-	return map[string]string{}, nil
+	opts := map[string]string{}
+	if s.config == nil {
+		return opts, nil
+	}
+	opts["dir"] = s.config.Node.DataDir
+	opts["log-level"] = s.config.Node.LogLevel
+	opts["max-concurrent-downloads"] = fmt.Sprintf("%d", s.taskQueue.MaxConcurrent())
+	opts["max-overall-download-limit"] = formatSpeedLimit(s.config.Download.SpeedLimit)
+	opts["max-download-limit"] = formatSpeedLimit(s.config.Download.SpeedLimit)
+	opts["max-connection-per-server"] = fmt.Sprintf("%d", s.config.Download.MaxPerServerConn)
+	opts["split"] = fmt.Sprintf("%d", s.config.Download.MaxConnections)
+	opts["continue"] = "true"
+	opts["min-split-size"] = fmt.Sprintf("%d", s.config.Download.DefaultChunkSize)
+	return opts, nil
 }
 
 func (s *JSONRPCServer) getOption(params []interface{}) (interface{}, error) {
@@ -590,10 +713,33 @@ func (s *JSONRPCServer) getOption(params []interface{}) (interface{}, error) {
 	if gid == "" {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
 	}
-	if _, err := s.taskQueue.Get(gid); err != nil {
+	t, err := s.taskQueue.Get(gid)
+	if err != nil {
 		return nil, newJSONRPCError(-1, fmt.Errorf("Task not found: %s", gid))
 	}
-	return map[string]string{}, nil
+	safe := t.GetSafe()
+	maxConn := 0
+	maxPerServer := 0
+	if s.config != nil {
+		maxConn = s.config.Download.MaxConnections
+		maxPerServer = s.config.Download.MaxPerServerConn
+	}
+	out := safe.Metadata["filename"]
+	if out == "" {
+		out = filepath.Base(safe.OutputPath)
+	}
+	maxDL := safe.Metadata["max-download-limit"]
+	if maxDL == "" {
+		maxDL = "0"
+	}
+	return map[string]string{
+		"dir":                       safe.OutputPath,
+		"out":                       out,
+		"split":                     fmt.Sprintf("%d", maxConn),
+		"max-connection-per-server": fmt.Sprintf("%d", maxPerServer),
+		"max-download-limit":        maxDL,
+		"priority":                  fmt.Sprintf("%d", safe.Priority),
+	}, nil
 }
 
 func (s *JSONRPCServer) getGlobalStat(_ []interface{}) (interface{}, error) {
@@ -658,6 +804,9 @@ func (s *JSONRPCServer) changeUri(params []interface{}) (interface{}, error) {
 func (s *JSONRPCServer) saveSession(_ []interface{}) (interface{}, error) {
 	tasks := s.taskQueue.List()
 	for _, t := range tasks {
+		if s.taskStore == nil {
+			break
+		}
 		if err := s.taskStore.Save(t); err != nil {
 			s.logger.Warnw("saveSession persist failed", "gid", t.ID, "err", err)
 		}
@@ -699,6 +848,8 @@ func (s *JSONRPCServer) getSessionInfo() (interface{}, error) {
 }
 
 func (s *JSONRPCServer) purgeDownloadResult(_ []interface{}) (interface{}, error) {
+	count := s.taskQueue.PurgeStopped()
+	s.logger.Debugw("purgeDownloadResult", "purged", count)
 	return "OK", nil
 }
 
@@ -707,7 +858,11 @@ func (s *JSONRPCServer) removeDownloadResult(params []interface{}) (interface{},
 	if gid == "" {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
 	}
-	return "OK", nil
+	if err := s.taskQueue.RemoveStopped(gid); err != nil {
+		return nil, newJSONRPCError(-1, err)
+	}
+	_ = s.taskStore.Delete(gid)
+	return gid, nil
 }
 
 func (s *JSONRPCServer) multicall(params []interface{}) (interface{}, error) {
@@ -770,6 +925,17 @@ func (s *JSONRPCServer) listMethods() (interface{}, error) {
 		"aria2.getVersion", "aria2.getSessionInfo",
 		"aria2.purgeDownloadResult", "aria2.removeDownloadResult",
 		"system.multicall", "system.listMethods", "system.listNotifications",
+	}, nil
+}
+
+func (s *JSONRPCServer) listNotifications() (interface{}, error) {
+	return []string{
+		"aria2.onDownloadStart",
+		"aria2.onDownloadPause",
+		"aria2.onDownloadStop",
+		"aria2.onDownloadComplete",
+		"aria2.onDownloadError",
+		"aria2.onBtDownloadComplete",
 	}, nil
 }
 
@@ -877,6 +1043,9 @@ func (s *JSONRPCServer) outputDir(options map[string]interface{}) string {
 }
 
 func (s *JSONRPCServer) persistTask(t *task.Task) {
+	if s.taskStore == nil {
+		return
+	}
 	if err := s.taskStore.Save(t); err != nil {
 		s.logger.Warnw("Failed to persist task", "gid", t.ID, "err", err)
 	}

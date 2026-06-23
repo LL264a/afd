@@ -188,6 +188,9 @@ func NewDownloaderFromURL(url, outputPath string, cfg *config.DownloadConfig, lo
 	if IsFTPURL(url) {
 		return NewFTPDownloader(url, outputPath, cfg, logger)
 	}
+	if IsSFTPURL(url) {
+		return NewSFTPDownloader(url, outputPath, nil), nil
+	}
 	if IsS3URL(url) {
 		return NewS3Downloader(url, outputPath, cfg, logger)
 	}
@@ -386,9 +389,16 @@ func (d *Downloader) Download(ctx context.Context) error {
 	d.lastSaveTime = time.Now()
 	d.swMu.Unlock()
 
-	return DoWithRetryWithLogger(ctx, d.GetRetryConfig(), d.logger, func() error {
+	err := DoWithRetryWithLogger(ctx, d.GetRetryConfig(), d.logger, func() error {
 		return d.doDownload(ctx)
 	})
+	if err != nil {
+		return err
+	}
+	if saveErr := d.saveCookies(); saveErr != nil {
+		d.logger.Warnw("failed to save cookies", "error", saveErr)
+	}
+	return nil
 }
 
 func (d *Downloader) doDownload(ctx context.Context) error {
@@ -1472,6 +1482,10 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 		}
 	}
 
+	if saveErr := d.saveCookies(); saveErr != nil {
+		d.logger.Warnw("failed to save cookies", "error", saveErr)
+	}
+
 	return nil
 }
 
@@ -1587,6 +1601,10 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 		}
 	}
 
+	if saveErr := d.saveCookies(); saveErr != nil {
+		d.logger.Warnw("failed to save cookies", "error", saveErr)
+	}
+
 	return nil
 }
 
@@ -1663,6 +1681,36 @@ func (d *Downloader) loadCookies() error {
 		d.logger.Debugw("Loaded cookies", "count", len(cookies))
 	}
 
+	return nil
+}
+
+func (d *Downloader) saveCookies() error {
+	if d.cookieJar == nil {
+		return nil
+	}
+
+	u, err := url.Parse(d.url)
+	if err != nil {
+		return err
+	}
+
+	cookies := d.cookieJar.Cookies(u)
+	if len(cookies) == 0 {
+		return nil
+	}
+
+	path := d.getCookieFilePath()
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	if err := gob.NewEncoder(file).Encode(cookies); err != nil {
+		return err
+	}
+
+	d.logger.Debugw("Saved cookies", "count", len(cookies))
 	return nil
 }
 

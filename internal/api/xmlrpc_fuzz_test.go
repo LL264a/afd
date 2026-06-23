@@ -21,7 +21,8 @@ func init() {
 func newFuzzXMLRPC(t testing.TB) *XMLRPCServer {
 	t.Helper()
 	tq := task.NewTaskQueue(8)
-	return NewXMLRPCServer(tq)
+	jrpc := NewJSONRPCServer(tq, nil, nil, "test")
+	return NewXMLRPCServer(tq, jrpc)
 }
 
 func FuzzXMLRPCServe(f *testing.F) {

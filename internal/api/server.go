@@ -175,7 +175,7 @@ func NewServer(cfg *config.Config, taskQueue *task.TaskQueue, taskStore *task.Ta
 	apiMux.Handle("/rpc", jsonRPCServer)
 
 	// XML-RPC endpoint
-	xmlRPCServer := NewXMLRPCServer(taskQueue)
+	xmlRPCServer := NewXMLRPCServer(taskQueue, jsonRPCServer)
 	xmlRPCServer.RegisterRoutes(apiMux)
 
 	// API endpoints
