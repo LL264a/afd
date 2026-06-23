@@ -26,10 +26,10 @@ type adaptiveController struct {
 	lastCheckBytes int64
 	lastCheckTime  time.Time
 
-	speedThresholdLow int64
+	speedThresholdLow  int64
 	speedImproveRatio float64
 	adjustInterval    time.Duration
-	lastAdjustTime    time.Time
+	lastAdjustTimeAtomic int64 // atomic, 纳秒时间戳
 }
 
 func newAdaptiveController(maxThreads, minThreads int) *adaptiveController {
@@ -122,8 +122,16 @@ func (ac *adaptiveController) setThreadCount(n int32) {
 }
 
 func (ac *adaptiveController) shouldAdjust() (adjusted bool, newThreads int32) {
+	// 无锁快速路径：距离上次调整不足 adjustInterval 时直接返回
+	last := atomic.LoadInt64(&ac.lastAdjustTimeAtomic)
+	if last != 0 && time.Since(time.Unix(0, last)) < ac.adjustInterval {
+		return false, 0
+	}
+
 	ac.mu.Lock()
-	if time.Since(ac.lastAdjustTime) < ac.adjustInterval {
+	// 再次检查（可能其他 goroutine 已经调整了）
+	last = atomic.LoadInt64(&ac.lastAdjustTimeAtomic)
+	if last != 0 && time.Since(time.Unix(0, last)) < ac.adjustInterval {
 		ac.mu.Unlock()
 		return false, 0
 	}
@@ -139,7 +147,7 @@ func (ac *adaptiveController) shouldAdjust() (adjusted bool, newThreads int32) {
 
 	ac.lastCheckBytes = currentBytes
 	ac.lastCheckTime = time.Now()
-	ac.lastAdjustTime = time.Now()
+	atomic.StoreInt64(&ac.lastAdjustTimeAtomic, time.Now().UnixNano())
 	ac.mu.Unlock()
 
 	current := atomic.LoadInt32(&ac.activeThreads)
@@ -173,5 +181,5 @@ func (ac *adaptiveController) reset() {
 	ac.count = 0
 	ac.lastCheckBytes = 0
 	ac.lastCheckTime = time.Now()
-	ac.lastAdjustTime = time.Time{}
+	atomic.StoreInt64(&ac.lastAdjustTimeAtomic, 0)
 }

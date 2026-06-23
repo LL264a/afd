@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +57,8 @@ type TaskListResponse struct {
 	Tasks  []*task.Task `json:"tasks"`
 	Total  int          `json:"total"`
 	Active int          `json:"active"`
+	Limit  int          `json:"limit,omitempty"`
+	Offset int          `json:"offset"`
 }
 
 type NodeResponse struct {
@@ -185,14 +188,7 @@ func NewServer(cfg *config.Config, taskQueue *task.TaskQueue, taskStore *task.Ta
 	apiMux.HandleFunc("/api/nodes", server.handleNodes)
 	apiMux.HandleFunc("/api/status", server.handleStatus)
 	apiMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"status":    "healthy",
-			"version":   server.version,
-			"uptime":    time.Since(server.startedAt).String(),
-			"tasks":     server.taskQueue.TotalCount(),
-			"active":    server.taskQueue.ActiveCount(),
-			"timestamp": time.Now().UTC().Format(time.RFC3339),
-		})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "healthy"})
 	})
 	apiMux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{
@@ -204,10 +200,12 @@ func NewServer(cfg *config.Config, taskQueue *task.TaskQueue, taskStore *task.Ta
 	// Apply middleware to API routes only
 	middlewares := []Middleware{
 		Recovery(),
+		PrometheusMiddleware,
 		Logging(),
 		server.rateLimiterMiddleware(cfg.API.RateLimit, time.Minute),
 		CORS(cfg.API.EnableCORS, cfg.API.CORSAllowedOrigins...),
 		Auth(cfg.API.AuthToken),
+		RequestValidation(),
 	}
 	// apiMux 内部路由以 /api/ 开头，挂载到 /api/v1/ 下时需要将
 	// /api/v1 前缀剥离并改写为 /api，使内部路由模式能够匹配。
@@ -281,17 +279,43 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	tasks := s.taskQueue.List()
 
-	response := TaskListResponse{
-		Tasks:  make([]*task.Task, len(tasks)),
-		Total:  len(tasks),
-		Active: s.taskQueue.ActiveCount(),
+	// 解析分页参数
+	limit := 0 // 0 表示全部
+	offset := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+			offset = v
+		}
 	}
 
-	for i, t := range tasks {
-		taskCopy := t.GetSafe()
-		tasks[i] = &taskCopy
+	total := len(tasks)
+	if offset > total {
+		offset = total
 	}
-	response.Tasks = tasks
+	end := total
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	paged := tasks[offset:end]
+
+	response := TaskListResponse{
+		Tasks:  make([]*task.Task, len(paged)),
+		Total:  total,
+		Active: s.taskQueue.ActiveCount(),
+		Offset: offset,
+	}
+	if limit > 0 {
+		response.Limit = limit
+	}
+	for i, t := range paged {
+		taskCopy := t.GetSafe()
+		response.Tasks[i] = &taskCopy
+	}
 
 	writeJSON(w, http.StatusOK, response)
 }

@@ -2,6 +2,7 @@ package nat
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ type SignalingMessage struct {
 	NatType    string `json:"nat_type"`
 	PublicIP   string `json:"public_ip"`
 	PublicPort uint16 `json:"public_port"`
+	Data       string `json:"data,omitempty"` // 承载 offer/answer 等 SDP 数据
 }
 
 type SignalingServer struct {
@@ -237,13 +239,14 @@ func (c *SignalingClient) QueryPeer(peerID string) (*SignalingMessage, error) {
 	if err := c.sendMessage(msg); err != nil {
 		return nil, err
 	}
-	return nil, nil
+	return nil, fmt.Errorf("query response not yet implemented")
 }
 
 func (c *SignalingClient) SendOffer(peerID string, offer string) error {
 	msg := SignalingMessage{
 		Type:   "offer",
 		PeerID: peerID,
+		Data:   offer,
 	}
 	return c.sendMessage(msg)
 }
@@ -252,6 +255,7 @@ func (c *SignalingClient) SendAnswer(peerID string, answer string) error {
 	msg := SignalingMessage{
 		Type:   "answer",
 		PeerID: peerID,
+		Data:   answer,
 	}
 	return c.sendMessage(msg)
 }

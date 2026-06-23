@@ -2,6 +2,7 @@ package nat
 
 import (
 	"encoding/binary"
+	"fmt"
 	"net"
 	"time"
 
@@ -242,7 +243,8 @@ func (c *STUNClient) detectNATType(publicIP string, publicPort uint16) (NATType,
 
 	portRestricted, err := c.testPortRestricted(publicIP, publicPort)
 	if err != nil {
-		return NATTypeRestrictedCone, err
+		// NAT 类型检测未实现，无法确定具体类型
+		return NATTypeUnknown, nil
 	}
 
 	if !portRestricted {
@@ -251,7 +253,8 @@ func (c *STUNClient) detectNATType(publicIP string, publicPort uint16) (NATType,
 
 	fullCone, err := c.testFullCone(publicIP, publicPort)
 	if err != nil {
-		return NATTypeRestrictedCone, err
+		// full cone 检测未实现，无法确定具体类型
+		return NATTypeUnknown, nil
 	}
 
 	if fullCone {
@@ -316,11 +319,11 @@ func (c *STUNClient) parseChangedAddress(data []byte) (net.IP, error) {
 }
 
 func (c *STUNClient) testPortRestricted(publicIP string, publicPort uint16) (bool, error) {
-	return false, nil
+	return false, fmt.Errorf("port restricted NAT test not implemented")
 }
 
 func (c *STUNClient) testFullCone(publicIP string, publicPort uint16) (bool, error) {
-	return true, nil
+	return false, fmt.Errorf("full cone NAT test not implemented")
 }
 
 var (

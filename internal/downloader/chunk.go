@@ -184,11 +184,12 @@ func (p *Piece) SetStatus(s PieceStatus) {
 
 // BitfieldMan 位图管理器，追踪 Block 级完成状态
 type BitfieldMan struct {
-	numBlocks   int
-	blockLength int64
-	totalLength int64
-	bitfield    []byte // 完成位图
-	useBitfield []byte // 占用位图（防止多个 goroutine 下载同一个 block）
+	numBlocks       int
+	blockLength     int64
+	totalLength     int64
+	bitfield        []byte // 完成位图
+	useBitfield     []byte // 占用位图（防止多个 goroutine 下载同一个 block）
+	completedCount  int    // 已完成的 block 数量（O(1) 判断是否全部完成）
 }
 
 func NewBitfieldMan(numBlocks int, blockLength, totalLength int64) *BitfieldMan {
@@ -216,9 +217,28 @@ func (b *BitfieldMan) BlockLength(idx int) int64 {
 
 // SetBit 标记 block 为已完成
 func (b *BitfieldMan) SetBit(idx int) {
-	if idx >= 0 && idx < b.numBlocks {
-		b.bitfield[idx/8] |= 1 << (uint(idx) % 8)
+	if idx < 0 || idx >= b.numBlocks {
+		return
 	}
+	byteIdx := idx / 8
+	bitIdx := uint(idx) % 8
+	if b.bitfield[byteIdx]&(1<<bitIdx) == 0 { // 原先未设置，递增计数器
+		b.completedCount++
+	}
+	b.bitfield[byteIdx] |= 1 << bitIdx
+}
+
+// ClearBit 清除 block 的完成标记
+func (b *BitfieldMan) ClearBit(idx int) {
+	if idx < 0 || idx >= b.numBlocks {
+		return
+	}
+	byteIdx := idx / 8
+	bitIdx := uint(idx) % 8
+	if b.bitfield[byteIdx]&(1<<bitIdx) != 0 { // 原先已设置，递减计数器
+		b.completedCount--
+	}
+	b.bitfield[byteIdx] &^= 1 << bitIdx
 }
 
 // UnsetUseBit 释放 block 的占用
@@ -253,12 +273,7 @@ func (b *BitfieldMan) IsUseBitSet(idx int) bool {
 
 // IsAllBitSet 检查是否所有 block 都已完成
 func (b *BitfieldMan) IsAllBitSet() bool {
-	for i := 0; i < b.numBlocks; i++ {
-		if !b.IsBitSet(i) {
-			return false
-		}
-	}
-	return true
+	return b.completedCount == b.numBlocks
 }
 
 // FirstMissingUnusedIndex 找到第一个未完成且未被占用的 block
@@ -321,6 +336,13 @@ func (b *BitfieldMan) SetBitfield(bf []byte) {
 		return
 	}
 	copy(b.bitfield, bf)
+	// 重新计算已完成 block 数量
+	b.completedCount = 0
+	for i := 0; i < b.numBlocks; i++ {
+		if b.IsBitSet(i) {
+			b.completedCount++
+		}
+	}
 }
 
 // SplitFileIntoPieces 将文件分割为 Pieces

@@ -25,6 +25,7 @@ type HolePuncher struct {
 	stopOnce   sync.Once
 	connected  bool
 	remoteAddr string
+	peerReady  chan struct{}
 }
 
 type HolePunchMessage struct {
@@ -38,7 +39,8 @@ type HolePunchMessage struct {
 
 func NewHolePuncher() *HolePuncher {
 	return &HolePuncher{
-		stopCh: make(chan struct{}),
+		stopCh:    make(chan struct{}),
+		peerReady: make(chan struct{}, 1),
 	}
 }
 
@@ -98,6 +100,7 @@ func (h *HolePuncher) handleMessage(msg *HolePunchMessage, addr *net.UDPAddr) {
 	case HolePunchResponse:
 		logger.Log.Debugf("Received hole punch response from %s", addr)
 		h.establishConnection(addr)
+		h.signalPeerReady()
 
 	case HolePunchAck:
 		logger.Log.Debugf("Received hole punch ack from %s", addr)
@@ -105,6 +108,25 @@ func (h *HolePuncher) handleMessage(msg *HolePunchMessage, addr *net.UDPAddr) {
 		h.connected = true
 		h.remoteAddr = addr.String()
 		h.mu.Unlock()
+		h.signalPeerReady()
+
+	case HolePunchSync:
+		logger.Log.Debugf("Received hole punch sync from %s", addr)
+		h.mu.Lock()
+		if !h.connected {
+			h.connected = true
+			h.remoteAddr = addr.String()
+			logger.Log.Infof("Received peer connection from %s", addr)
+		}
+		h.mu.Unlock()
+		h.signalPeerReady()
+	}
+}
+
+func (h *HolePuncher) signalPeerReady() {
+	select {
+	case h.peerReady <- struct{}{}:
+	default:
 	}
 }
 
@@ -220,29 +242,14 @@ func (h *HolePuncher) PunchWithSync(peerAddr string, localPublicIP string, local
 }
 
 func (h *HolePuncher) listenForPeer() {
-	buf := make([]byte, 4096)
-	for {
-		select {
-		case <-h.stopCh:
-			return
-		default:
-		}
-
-		h.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-		n, addr, err := h.conn.ReadFromUDP(buf)
-		if err != nil {
-			continue
-		}
-
-		if n > 0 {
-			h.mu.Lock()
-			if !h.connected {
-				h.connected = true
-				h.remoteAddr = addr.String()
-				logger.Log.Infof("Received peer connection from %s", addr)
-			}
-			h.mu.Unlock()
-		}
+	// 不再直接读 conn，避免与 handleMessages 竞争同一连接。
+	// 等待 handleMessages 收到 peer 响应后通过 peerReady 通知。
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-h.peerReady:
+	case <-timer.C:
+	case <-h.stopCh:
 	}
 }
 

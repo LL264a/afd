@@ -3,6 +3,7 @@ package cluster
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nexus-dl/afd/pkg/logger"
@@ -33,6 +34,7 @@ type Membership struct {
 	stopCh   chan struct{}
 	stopOnce sync.Once
 	wg       sync.WaitGroup
+	stopped  atomic.Bool
 }
 
 func NewMembership(localID string) *Membership {
@@ -49,25 +51,42 @@ func NewMembership(localID string) *Membership {
 
 func (m *Membership) eventLoop() {
 	defer m.wg.Done()
-	for event := range m.events {
-		m.mu.RLock()
-		handlers := make([]EventHandler, len(m.handlers))
-		copy(handlers, m.handlers)
-		m.mu.RUnlock()
-
-		for _, handler := range handlers {
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						logger.Log.Errorw("cluster event handler panic",
-							"error", fmt.Sprintf("%v", r),
-							"event_type", event.Type,
-						)
-					}
-				}()
-				handler(event)
-			}()
+	for {
+		select {
+		case event := <-m.events:
+			m.dispatch(event)
+		case <-m.stopCh:
+			// 关闭后排空剩余事件再退出
+			for {
+				select {
+				case event := <-m.events:
+					m.dispatch(event)
+				default:
+					return
+				}
+			}
 		}
+	}
+}
+
+func (m *Membership) dispatch(event ClusterEvent) {
+	m.mu.RLock()
+	handlers := make([]EventHandler, len(m.handlers))
+	copy(handlers, m.handlers)
+	m.mu.RUnlock()
+
+	for _, handler := range handlers {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Log.Errorw("cluster event handler panic",
+						"error", fmt.Sprintf("%v", r),
+						"event_type", event.Type,
+					)
+				}
+			}()
+			handler(event)
+		}()
 	}
 }
 
@@ -227,10 +246,9 @@ func (m *Membership) OnEvent(handler EventHandler) {
 }
 
 func (m *Membership) emitEvent(event ClusterEvent) {
-	defer func() {
-		// 防止 Shutdown 关闭 events channel 后发送导致 panic
-		recover()
-	}()
+	if m.stopped.Load() {
+		return
+	}
 	select {
 	case m.events <- event:
 	default:
@@ -243,7 +261,8 @@ func (m *Membership) emitEvent(event ClusterEvent) {
 
 func (m *Membership) Shutdown() {
 	m.stopOnce.Do(func() {
-		close(m.events)
+		m.stopped.Store(true)
+		close(m.stopCh)
 		m.wg.Wait()
 	})
 }

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"plugin"
 	"sync"
 
 	"github.com/nexus-dl/afd/pkg/logger"
@@ -51,6 +52,30 @@ func (r *Registry) ListBuiltin() []string {
 	return names
 }
 
+// LoadFromFile 从共享库文件加载插件
+func (r *Registry) LoadFromFile(path string) (Plugin, error) {
+	plug, err := plugin.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open plugin file: %w", err)
+	}
+
+	symPlugin, err := plug.Lookup("Plugin")
+	if err != nil {
+		return nil, fmt.Errorf("failed to find Plugin symbol: %w", err)
+	}
+
+	p, ok := symPlugin.(Plugin)
+	if !ok {
+		return nil, fmt.Errorf("plugin does not implement Plugin interface")
+	}
+
+	if err := p.Init(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to initialize plugin: %w", err)
+	}
+
+	return p, nil
+}
+
 func (r *Registry) DiscoverFromDir(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -66,12 +91,21 @@ func (r *Registry) DiscoverFromDir(dir string) error {
 			continue
 		}
 
-		if filepath.Ext(entry.Name()) != ".so" && filepath.Ext(entry.Name()) != ".dll" && filepath.Ext(entry.Name()) != ".dylib" {
+		ext := filepath.Ext(entry.Name())
+		if ext != ".so" && ext != ".dll" && ext != ".dylib" {
 			continue
 		}
 
 		path := filepath.Join(dir, entry.Name())
-		logger.Log.Infof("Discovered plugin file: %s", path)
+		p, err := r.LoadFromFile(path)
+		if err != nil {
+			logger.Log.Warnw("failed to load discovered plugin", "path", path, "error", err)
+			continue
+		}
+		r.mu.Lock()
+		r.discovered[p.Name()] = p
+		r.mu.Unlock()
+		logger.Log.Infof("Discovered and loaded plugin: %s", path)
 	}
 
 	return nil

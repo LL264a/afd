@@ -266,13 +266,15 @@ func doDownload(url, outputPath string) error {
 
 	startTime := time.Now()
 
+	ticker := time.NewTicker(2 * time.Second)
 	go func() {
+		defer ticker.Stop()
 		var lastLoggedPct int
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(2 * time.Second):
+			case <-ticker.C:
 				progress := d.Progress()
 				speed := d.Speed()
 				downloaded := d.TotalDownloaded()

@@ -333,10 +333,27 @@ func (d *Downloader) SaveProgress() error {
 	return nil
 }
 
-func (d *Downloader) shouldSaveProgress(bytes int64) bool {
+// recordSpeedAndCheckSave 在单次锁内完成速度采样和保存进度判断，避免热路径双重锁
+func (d *Downloader) recordSpeedAndCheckSave(bytes int64) bool {
 	d.swMu.Lock()
 	defer d.swMu.Unlock()
 
+	// recordSpeed 逻辑
+	d.speedWindow[d.swHead] = speedSample{
+		timestamp: time.Now(),
+		bytes:     bytes,
+	}
+	d.swHead = (d.swHead + 1) % len(d.speedWindow)
+	if d.swCount < len(d.speedWindow) {
+		d.swCount++
+	}
+
+	if d.cfg.Adaptive {
+		d.adaptive.addSample(bytes)
+		d.adaptive.shouldAdjust()
+	}
+
+	// shouldSaveProgress 逻辑
 	d.sinceLastSave += bytes
 	now := time.Now()
 
@@ -1028,7 +1045,12 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 
 				written := int64(n)
 				atomic.AddInt64(&d.totalDownloaded, written)
-				d.recordSpeed(written)
+
+				if d.recordSpeedAndCheckSave(written) {
+					if err := d.SaveProgress(); err != nil {
+						d.logger.Errorw("failed to save progress", "error", err)
+					}
+				}
 
 				currentOffset += written
 				remainingInBlock -= written
@@ -1061,16 +1083,10 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 				}
 
 				// 当当前 block 下载完成时，标记完成并移到下一个 block
-				if remainingInBlock <= 0 {
-					piece.CompleteBlock(currentBlockIdx)
+			if remainingInBlock <= 0 {
+				piece.CompleteBlock(currentBlockIdx)
 
-					if d.shouldSaveProgress(written) {
-						if err := d.SaveProgress(); err != nil {
-							d.logger.Errorw("failed to save progress", "error", err)
-						}
-					}
-
-					if piece.IsComplete() {
+				if piece.IsComplete() {
 						resp.Body.Close()
 						pm.CompletePiece(piece.Index)
 						return nil
@@ -1222,9 +1238,8 @@ func (d *Downloader) downloadRangeOnceFromURL(ctx context.Context, file *os.File
 			written := int64(n)
 			currentOffset += written
 			atomic.AddInt64(&d.totalDownloaded, written)
-			d.recordSpeed(written)
 
-			if d.shouldSaveProgress(written) {
+			if d.recordSpeedAndCheckSave(written) {
 				if err := d.SaveProgress(); err != nil {
 					d.logger.Errorw("failed to save progress", "error", err)
 				}
@@ -1271,25 +1286,6 @@ func (d *Downloader) newGetRequest(ctx context.Context, rawURL string) (*http.Re
 	}
 	req.Header.Set("User-Agent", "AFD/0.3")
 	return req, nil
-}
-
-func (d *Downloader) recordSpeed(bytes int64) {
-	d.swMu.Lock()
-	defer d.swMu.Unlock()
-
-	d.speedWindow[d.swHead] = speedSample{
-		timestamp: time.Now(),
-		bytes:     bytes,
-	}
-	d.swHead = (d.swHead + 1) % len(d.speedWindow)
-	if d.swCount < len(d.speedWindow) {
-		d.swCount++
-	}
-
-	if d.cfg.Adaptive {
-		d.adaptive.addSample(bytes)
-		d.adaptive.shouldAdjust()
-	}
 }
 
 func (d *Downloader) Speed() int64 {
@@ -1444,9 +1440,8 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 			}
 
 			atomic.AddInt64(&d.totalDownloaded, int64(n))
-			d.recordSpeed(int64(n))
 
-			if d.shouldSaveProgress(int64(n)) {
+			if d.recordSpeedAndCheckSave(int64(n)) {
 				if err := d.SaveProgress(); err != nil {
 					d.logger.Errorw("failed to save progress", "error", err)
 				}
@@ -1560,9 +1555,8 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 			}
 
 			atomic.AddInt64(&d.totalDownloaded, int64(n))
-			d.recordSpeed(int64(n))
 
-			if d.shouldSaveProgress(int64(n)) {
+			if d.recordSpeedAndCheckSave(int64(n)) {
 				if err := d.SaveProgress(); err != nil {
 					d.logger.Errorw("failed to save progress", "error", err)
 				}

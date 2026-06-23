@@ -189,6 +189,10 @@ func (f *Failover) reassignTasks(taskIDs []string) {
 		return
 	}
 
+	f.mu.RLock()
+	reassign := f.taskReassign
+	f.mu.RUnlock()
+
 	type reassignItem struct {
 		taskID string
 		nodeID string
@@ -206,8 +210,8 @@ func (f *Failover) reassignTasks(taskIDs []string) {
 
 	// 释放锁后执行外部回调（reassignTasks 自身不持有 f.mu）
 	for _, item := range items {
-		if f.taskReassign != nil {
-			if err := f.taskReassign(item.taskID, item.nodeID); err != nil {
+		if reassign != nil {
+			if err := reassign(item.taskID, item.nodeID); err != nil {
 				f.logger.Errorf("Failed to reassign task %s to node %s: %v", item.taskID, item.nodeID, err)
 			}
 		}

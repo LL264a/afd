@@ -56,12 +56,12 @@ func NewNATManager(cfg config.NATConfig) *NATManager {
 func (nm *NATManager) Connect(peerID, peerAddr string) (*NATConnection, error) {
 	logger.Log.Infof("NAT: connecting to peer %s at %s", peerID, peerAddr)
 
-	conn, err := nm.tryHolePunch(peerID, peerAddr)
+	conn, err := nm.tryDirectConnect(peerID, peerAddr)
 	if err != nil {
-		logger.Log.Warnf("NAT: hole punch failed for peer %s: %v, trying relay", peerID, err)
+		logger.Log.Warnf("NAT: direct connect failed for peer %s: %v, trying relay", peerID, err)
 		conn, err = nm.useRelay(peerID, peerAddr)
 		if err != nil {
-			return nil, fmt.Errorf("NAT: both hole punch and relay failed: %w", err)
+			return nil, fmt.Errorf("NAT: both direct connect and relay failed: %w", err)
 		}
 	}
 
@@ -73,11 +73,7 @@ func (nm *NATManager) Connect(peerID, peerAddr string) (*NATConnection, error) {
 	return conn, nil
 }
 
-func (nm *NATManager) tryHolePunch(peerID, peerAddr string) (*NATConnection, error) {
-	if nm.signalingServer == "" {
-		return nil, fmt.Errorf("no signaling server configured")
-	}
-
+func (nm *NATManager) tryDirectConnect(peerID, peerAddr string) (*NATConnection, error) {
 	conn, err := net.Dial("tcp", peerAddr)
 	if err != nil {
 		return nil, fmt.Errorf("direct dial failed: %w", err)
@@ -89,7 +85,7 @@ func (nm *NATManager) tryHolePunch(peerID, peerAddr string) (*NATConnection, err
 	return &NATConnection{
 		PeerID:     peerID,
 		Conn:       conn,
-		ConnType:   ConnectionHolePunch,
+		ConnType:   ConnectionDirect,
 		LocalAddr:  localAddr,
 		RemoteAddr: remoteAddr,
 		CreatedAt:  time.Now(),
