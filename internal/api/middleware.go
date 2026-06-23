@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -64,16 +65,13 @@ func Recovery() Middleware {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if err := recover(); err != nil {
-					// Log the full panic (with stack) for operators
-					// but DO NOT leak the panic value or stack to
-					// the client; an attacker can otherwise force
-					// arbitrary error strings into the response.
 					logger.Log.Errorw("panic recovered",
 						"error", fmt.Sprintf("%v", err),
-						"path", r.URL.Path,
+						"stack", string(debug.Stack()),
 						"method", r.Method,
+						"path", r.URL.Path,
 					)
-					sendError(w, http.StatusInternalServerError, "Internal server error", "")
+					sendError(w, http.StatusInternalServerError, "Internal Server Error", "")
 				}
 			}()
 			next.ServeHTTP(w, r)
@@ -85,6 +83,7 @@ func Auth(token string) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if token == "" {
+				// 未配置认证，放行（但启动时应有警告）
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -150,20 +149,15 @@ func (rw *responseWriter) WriteHeader(code int) {
 }
 
 func getClientIP(r *http.Request) string {
-	ip := r.Header.Get("X-Forwarded-For")
-	if ip != "" {
-		parts := strings.Split(ip, ",")
-		ip = strings.TrimSpace(parts[0])
-	} else {
-		ip = r.Header.Get("X-Real-IP")
+	// 优先使用直连地址，避免 X-Forwarded-For 被伪造绕过限流
+	if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return ip
 	}
-	if ip == "" {
-		ip, _, _ = net.SplitHostPort(r.RemoteAddr)
+	// 回退到 XFF（不安全，但保持兼容）
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		return strings.TrimSpace(strings.Split(xff, ",")[0])
 	}
-	if ip == "" {
-		ip = r.RemoteAddr
-	}
-	return ip
+	return r.RemoteAddr
 }
 
 type rateLimiter struct {

@@ -3,6 +3,7 @@ package cluster
 import (
 	"encoding/gob"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"sync"
@@ -81,6 +82,9 @@ func NewDiscovery(config DiscoveryConfig, localNode *LocalNode, membership *Memb
 }
 
 func (d *Discovery) Start() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	gob.Register(GossipMessage{})
 
 	addr := &net.UDPAddr{
@@ -190,6 +194,7 @@ func (d *Discovery) sendHeartbeat() {
 
 func (d *Discovery) broadcast(msg GossipMessage) {
 	d.mu.RLock()
+	conn := d.conn
 	peerAddrs := make([]string, 0, len(d.peers))
 	for addr, udpAddr := range d.peers {
 		if udpAddr != nil {
@@ -198,7 +203,7 @@ func (d *Discovery) broadcast(msg GossipMessage) {
 	}
 	d.mu.RUnlock()
 
-	if len(peerAddrs) == 0 {
+	if conn == nil || len(peerAddrs) == 0 {
 		return
 	}
 
@@ -223,7 +228,7 @@ func (d *Discovery) broadcast(msg GossipMessage) {
 		if err != nil {
 			continue
 		}
-		d.conn.WriteToUDP(data, udpAddr)
+		conn.WriteToUDP(data, udpAddr)
 	}
 }
 
@@ -402,7 +407,7 @@ type gobReader struct {
 
 func (r *gobReader) Read(p []byte) (int, error) {
 	if r.pos >= len(r.buf) {
-		return 0, fmt.Errorf("EOF")
+		return 0, io.EOF
 	}
 	n := copy(p, r.buf[r.pos:])
 	r.pos += n

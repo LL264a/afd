@@ -118,7 +118,7 @@ func (h *WebSocketHub) Run() {
 			logger.Log.Debugw("WebSocket client disconnected")
 
 		case message := <-h.broadcast:
-			h.mu.RLock()
+			h.mu.Lock()
 			for client := range h.clients {
 				select {
 				case client.send <- message:
@@ -127,7 +127,7 @@ func (h *WebSocketHub) Run() {
 					delete(h.clients, client)
 				}
 			}
-			h.mu.RUnlock()
+			h.mu.Unlock()
 		}
 	}
 }
@@ -263,12 +263,17 @@ func (h *WebSocketHub) tryBroadcast(data []byte) {
 
 func (c *WSClient) readPump() {
 	defer func() {
-		c.hub.unregister <- c
+		select {
+		case c.hub.unregister <- c:
+		case <-c.hub.done:
+		}
 		c.conn.Close(websocket.StatusNormalClosure, "")
 	}()
 
 	for {
-		_, message, err := c.conn.Read(c.ctx())
+		ctx, cancel := context.WithTimeout(c.ctx(), 60*time.Second)
+		_, message, err := c.conn.Read(ctx)
+		cancel()
 		if err != nil {
 			if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
 				logger.Log.Warnw("WebSocket read error",
@@ -337,7 +342,11 @@ func (c *WSClient) handleMessage(msg WSMessage) {
 		pong, _ := json.Marshal(WSMessage{
 			Type: "pong",
 		})
-		c.send <- pong
+		select {
+		case c.send <- pong:
+		default:
+			// 客户端消费过慢，丢弃 pong
+		}
 	}
 }
 
@@ -346,6 +355,10 @@ func (c *WSClient) ctx() context.Context {
 }
 
 func mustMarshal(v interface{}) json.RawMessage {
-	data, _ := json.Marshal(v)
+	data, err := json.Marshal(v)
+	if err != nil {
+		logger.Log.Warnw("failed to marshal websocket message", "error", err)
+		return nil
+	}
 	return data
 }

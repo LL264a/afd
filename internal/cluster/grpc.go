@@ -168,6 +168,8 @@ func NewRPCServer(addr string, auth *ClusterAuth) *RPCServer {
 }
 
 func (s *RPCServer) SetHandler(handler RPCHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.handler = handler
 }
 
@@ -518,6 +520,8 @@ func (c *RPCClient) Call(method string, req interface{}, resp interface{}) error
 	var rpcResp RPCResponse
 	dec := gob.NewDecoder(&gobReader{buf: respBody})
 	if err := dec.Decode(&rpcResp); err != nil {
+		c.conn.Close()
+		c.conn = nil
 		return fmt.Errorf("failed to decode response: %w", err)
 	}
 

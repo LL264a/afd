@@ -80,10 +80,17 @@ func (s *TaskStore) Save(task *Task) error {
 		return fmt.Errorf("failed to rename task %s: %w", task.ID, err)
 	}
 
-	// fsync 目录确保 rename 持久化
+	// fsync 目录确保 rename 持久化（Windows 上可能失败，非致命）
 	if d, err := os.Open(s.dataDir); err == nil {
-		d.Sync()
-		d.Close()
+		if err := d.Sync(); err != nil {
+			d.Close()
+			// Windows 上目录 fsync 可能返回 "Access is denied"，不阻断写入
+			if logger.Log != nil {
+				logger.Log.Debugw("fsync directory failed (non-fatal)", "dir", s.dataDir, "error", err)
+			}
+		} else {
+			d.Close()
+		}
 	}
 
 	return nil
@@ -114,8 +121,9 @@ func (s *TaskStore) Load(id string) (*Task, error) {
 }
 
 func (s *TaskStore) LoadAll() ([]*Task, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// 使用 Lock 而非 RLock，因为本函数会执行 os.Remove 清理 temp 文件（写操作）
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	if _, err := s.dir(); err != nil {
 		return nil, err

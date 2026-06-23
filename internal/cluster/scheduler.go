@@ -24,6 +24,7 @@ type Scheduler struct {
 	wg           sync.WaitGroup
 	ctx          context.Context
 	cancel       context.CancelFunc
+	startOnce    sync.Once
 }
 
 func NewScheduler(localNodeID string, cfg *config.Config) *Scheduler {
@@ -114,8 +115,6 @@ func (s *Scheduler) SubmitTask(t *task.Task) error {
 		delete(s.taskQueue, t.ID)
 		s.mu.Unlock()
 		return fmt.Errorf("scheduler is stopped")
-	default:
-		s.logger.Warnf("Dispatch channel full, task %s will be picked up later", t.ID)
 	}
 	s.logger.Infof("Task %s submitted to scheduler", t.ID)
 	return nil
@@ -247,7 +246,7 @@ func (s *Scheduler) GetTasksForNode(nodeID string) []string {
 
 	taskIDs := make([]string, 0)
 	for id, t := range s.taskQueue {
-		if t.TargetNode == nodeID {
+		if t.GetTargetNode() == nodeID {
 			taskIDs = append(taskIDs, id)
 		}
 	}
@@ -261,13 +260,13 @@ func (s *Scheduler) reassignTasks(fromNodeID string, count int, nodes []*Node) {
 		if reassigned >= count {
 			break
 		}
-		if t.TargetNode == fromNodeID {
+		if t.GetTargetNode() == fromNodeID {
 			// Round-robin across online nodes instead of dumping
 			// everything onto the first available one.
 			for i := 0; i < len(nodes); i++ {
 				candidate := nodes[(nodeIdx+i)%len(nodes)]
 				if candidate.ID != fromNodeID && candidate.IsOnline() {
-					t.TargetNode = candidate.ID
+					t.SetTargetNode(candidate.ID)
 					nodeIdx = (nodeIdx + i + 1) % len(nodes)
 					reassigned++
 					break

@@ -142,6 +142,7 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
+		defer cancel()
 		defer close(dl.done)
 		defer func() {
 			m.mu.Lock()
@@ -328,6 +329,8 @@ func (m *DownloadManager) monitorDownloadProgress(ctx context.Context, t *task.T
 
 				if shouldCancel {
 					logger.Log.Infow("Download speed too low, failing task", "task_id", t.ID, "speed", speed)
+					activeDl.cancel()
+					<-activeDl.done
 					m.mu.Lock()
 					delete(m.active, t.ID)
 					m.mu.Unlock()

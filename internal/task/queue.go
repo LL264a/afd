@@ -97,15 +97,13 @@ func (q *TaskQueue) Add(task *Task) error {
 
 func (q *TaskQueue) Remove(id string) error {
 	q.mu.Lock()
-	defer q.mu.Unlock()
-
 	task, exists := q.tasks[id]
 	if !exists {
+		q.mu.Unlock()
 		return fmt.Errorf("task %s not found", id)
 	}
 
 	wasActive := task.GetStatus() == StatusDownloading
-	task.SetStatus(StatusCancelled)
 	delete(q.tasks, id)
 
 	// Find the matching heap entry and remove it.  We must pass
@@ -120,7 +118,9 @@ func (q *TaskQueue) Remove(id string) error {
 	if wasActive {
 		q.activeCount--
 	}
+	q.mu.Unlock()
 
+	task.Cancel() // 取消任务 context
 	return nil
 }
 
@@ -276,20 +276,22 @@ func (q *TaskQueue) CompleteTask(id string) {
 		q.mu.Unlock()
 		return
 	}
+	// 只有下载中的任务才能完成，防止重复调用导致 activeCount 重复递减
+	if task.GetStatus() != StatusDownloading {
+		q.mu.Unlock()
+		return
+	}
 	task.SetStatus(StatusDone)
 	q.activeCount--
 	if q.activeCount < 0 {
 		q.activeCount = 0
 	}
+	delete(q.tasks, id)
 	q.mu.Unlock()
 
 	if q.OnTaskComplete != nil {
 		q.OnTaskComplete(task)
 	}
-
-	q.mu.Lock()
-	delete(q.tasks, id)
-	q.mu.Unlock()
 
 	q.tryStartNext()
 }
@@ -301,20 +303,22 @@ func (q *TaskQueue) FailTask(id string, errMsg string) {
 		q.mu.Unlock()
 		return
 	}
+	// 只有下载中的任务才能失败，防止重复调用导致 activeCount 重复递减
+	if task.GetStatus() != StatusDownloading {
+		q.mu.Unlock()
+		return
+	}
 	task.SetError(errMsg)
 	q.activeCount--
 	if q.activeCount < 0 {
 		q.activeCount = 0
 	}
+	delete(q.tasks, id)
 	q.mu.Unlock()
 
 	if q.OnTaskError != nil {
 		q.OnTaskError(task)
 	}
-
-	q.mu.Lock()
-	delete(q.tasks, id)
-	q.mu.Unlock()
 
 	q.tryStartNext()
 }

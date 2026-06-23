@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/nexus-dl/afd/pkg/logger"
 )
 
 type ControlFile struct {
@@ -121,10 +123,17 @@ func (s *ControlFileStore) Save(taskID string, cf *ControlFile) error {
 		return fmt.Errorf("failed to rename temp file for task %s: %w", taskID, err)
 	}
 
-	// fsync 目录确保 rename 持久化
+	// fsync 目录确保 rename 持久化（Windows 上可能失败，非致命）
 	if d, err := os.Open(dir); err == nil {
-		d.Sync()
-		d.Close()
+		if err := d.Sync(); err != nil {
+			d.Close()
+			// Windows 上目录 fsync 可能返回 "Access is denied"，不阻断写入
+			if logger.Log != nil {
+				logger.Log.Debugw("fsync directory failed (non-fatal)", "dir", dir, "error", err)
+			}
+		} else {
+			d.Close()
+		}
 	}
 
 	return nil

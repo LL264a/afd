@@ -20,6 +20,9 @@ const (
 	StatusCancelled   TaskStatus = "cancelled"
 )
 
+// idRand 是带时间种子的 math/rand source，作为 crypto/rand 失败时的回退熵源
+var idRand = mrand.New(mrand.NewSource(time.Now().UnixNano()))
+
 func GenerateID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -33,7 +36,7 @@ func GenerateID() string {
 		}
 		// 用 math/rand 填充剩余字节，补充熵源
 		for i := 8; i < len(b); i++ {
-			b[i] = byte(mrand.Intn(256))
+			b[i] = byte(idRand.Intn(256))
 		}
 	}
 	b[6] = (b[6] & 0x0f) | 0x40
@@ -119,6 +122,12 @@ func (t *Task) SetTargetNode(nodeID string) {
 	defer t.mu.Unlock()
 	t.TargetNode = nodeID
 	t.UpdatedAt = time.Now()
+}
+
+func (t *Task) GetTargetNode() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.TargetNode
 }
 
 func (t *Task) SetError(err string) {
@@ -225,8 +234,12 @@ func (t *Task) SetCancel(cancel context.CancelFunc) {
 
 func (t *Task) Cancel() {
 	t.mu.Lock()
-	cancel := t.cancel
+	if t.Status == StatusDone || t.Status == StatusFailed || t.Status == StatusCancelled {
+		t.mu.Unlock()
+		return
+	}
 	t.Status = StatusCancelled
+	cancel := t.cancel
 	t.mu.Unlock()
 	if cancel != nil {
 		cancel()

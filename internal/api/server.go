@@ -220,7 +220,7 @@ func NewServer(cfg *config.Config, taskQueue *task.TaskQueue, taskStore *task.Ta
 	probes := []Middleware{Recovery(), Logging(), CORS(cfg.API.EnableCORS, cfg.API.CORSAllowedOrigins...)}
 	mux.Handle("/health", Chain(apiMux, probes...))
 	mux.Handle("/ready", Chain(apiMux, probes...))
-	mux.Handle("/metrics", Chain(apiMux, probes...))
+	mux.Handle("/metrics", Chain(apiMux, Recovery(), Logging(), CORS(cfg.API.EnableCORS, cfg.API.CORSAllowedOrigins...), Auth(cfg.API.AuthToken)))
 
 	// Core is a pure JSON API now; the web UI lives in a separate
 	// repository (./ui) and is served by a dedicated nginx / CDN
@@ -245,6 +245,10 @@ func NewServer(cfg *config.Config, taskQueue *task.TaskQueue, taskStore *task.Ta
 		WriteTimeout:      0, // streaming responses; rely on IdleTimeout
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20, // 1 MiB
+	}
+
+	if cfg.API.AuthToken == "" {
+		logger.Log.Warnw("API authentication is disabled - all endpoints are open")
 	}
 
 	return server
@@ -478,6 +482,20 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	// 认证检查：WebSocket 无法使用标准中间件，需在握手前校验 token
+	if s.config.API.AuthToken != "" {
+		token := r.URL.Query().Get("token")
+		if token == "" {
+			token = r.Header.Get("Authorization")
+			if strings.HasPrefix(token, "Bearer ") {
+				token = token[7:]
+			}
+		}
+		if !secureCompare(token, s.config.API.AuthToken) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+	}
 	s.hub.ServeWS(w, r)
 }
 
@@ -545,9 +563,16 @@ func (s *Server) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 			"level": s.config.Node.LogLevel,
 		})
 	case http.MethodPost:
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<10) // 4KB
 		var req LogLevelRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			sendError(w, http.StatusBadRequest, "Invalid request body", err.Error())
+			return
+		}
+
+		allowed := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
+		if !allowed[req.Level] {
+			sendError(w, http.StatusBadRequest, "Invalid log level", req.Level)
 			return
 		}
 

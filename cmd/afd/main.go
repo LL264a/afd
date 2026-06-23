@@ -37,7 +37,12 @@ It supports HTTP, FTP, BitTorrent, S3, WebDAV, and more.
 	Version: fmt.Sprintf("%s (commit: %s, built: %s)", Version, Commit, BuildTime),
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		if cfgFile != "" {
-			config.Load(cfgFile)
+			if _, err := config.Load(cfgFile); err != nil {
+				// 配置加载失败不阻断，CLI 参数优先
+				if logger.Log != nil {
+					logger.Log.Debugw("config load skipped", "error", err)
+				}
+			}
 		}
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -118,15 +123,14 @@ var statusCmd = &cobra.Command{
 }
 
 var (
-	parallel    int
-	output      string
-	speedLimit  string
-	timeout     int
-	inputFile   string
-	dir         string
-	allTorrrent bool
-	adaptive    bool
-	insecure    bool
+	parallel   int
+	output     string
+	speedLimit string
+	timeout    int
+	inputFile  string
+	dir        string
+	adaptive   bool
+	insecure   bool
 )
 
 var downloadCmd = &cobra.Command{
@@ -196,11 +200,23 @@ func doDownload(url, outputPath string) error {
 
 	if speedLimit != "" {
 		var limit int64
-		fmt.Sscanf(speedLimit, "%d", &limit)
-		if strings.HasSuffix(speedLimit, "M") {
-			limit *= 1024 * 1024
-		} else if strings.HasSuffix(speedLimit, "K") {
+		var suffix string
+		n, err := fmt.Sscanf(speedLimit, "%d%s", &limit, &suffix)
+		if err != nil && n < 1 {
+			return fmt.Errorf("invalid speed limit: %s", speedLimit)
+		}
+		suffix = strings.ToLower(suffix)
+		switch suffix {
+		case "", "b":
+			// bytes per second
+		case "k":
 			limit *= 1024
+		case "m":
+			limit *= 1024 * 1024
+		case "g":
+			limit *= 1024 * 1024 * 1024
+		default:
+			return fmt.Errorf("invalid speed limit suffix: %s", suffix)
 		}
 		cfg.SpeedLimit = limit
 	}
@@ -279,24 +295,30 @@ func doDownload(url, outputPath string) error {
 	}()
 
 	err = d.Download(ctx)
-
-	// 下载完成后 cancel context，停止进度显示 goroutine
-	cancel()
-
 	if err != nil {
 		if ctx.Err() != nil {
 			log.Infow("download cancelled")
+			signal.Stop(sigCh)
+			cancel()
 			return nil
 		}
+		signal.Stop(sigCh)
+		cancel()
 		return fmt.Errorf("下载失败: %w", err)
 	}
+	signal.Stop(sigCh)
+	cancel()
 
 	elapsed := time.Since(startTime)
 	fileSize := d.FileSize()
+	var avgSpeed int64
+	if elapsed.Seconds() > 0 {
+		avgSpeed = int64(float64(fileSize) / elapsed.Seconds())
+	}
 	log.Infow("download finished",
 		"elapsed", elapsed.Round(time.Second).String(),
 		"file_size", formatBytes(fileSize),
-		"avg_speed", fmt.Sprintf("%s/s", formatBytes(int64(float64(fileSize)/elapsed.Seconds()))))
+		"avg_speed", fmt.Sprintf("%s/s", formatBytes(avgSpeed)))
 
 	return nil
 }
@@ -399,7 +421,6 @@ func init() {
 	downloadCmd.Flags().IntVar(&timeout, "timeout", 0, "超时时间 (秒)")
 	downloadCmd.Flags().StringVarP(&inputFile, "input-file", "i", "", "批量下载文件 (每行一个URL)")
 	downloadCmd.Flags().StringVarP(&dir, "dir", "d", "", "下载保存目录")
-	downloadCmd.Flags().BoolVar(&allTorrrent, "all", false, "下载所有torrent文件中的内容")
 	downloadCmd.Flags().BoolVar(&adaptive, "adaptive", false, "自适应线程数 (根据网络状况自动调整)")
 	downloadCmd.Flags().BoolVarP(&insecure, "insecure", "k", false, "跳过TLS证书验证")
 }

@@ -3,17 +3,22 @@ package logger
 import (
 	"io"
 	"os"
+	"sync"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
 var (
+	logMu  sync.Mutex
 	Log    *zap.SugaredLogger
 	closer io.Closer
 )
 
 func Init(level string, logFile string) error {
+	logMu.Lock()
+	defer logMu.Unlock()
+
 	var lvl zapcore.Level
 	switch level {
 	case "debug":
@@ -58,6 +63,9 @@ func Init(level string, logFile string) error {
 		)
 	}
 
+	// 先创建新 logger，成功后再关闭旧的，避免新 logger 创建失败时旧 logger 已被关闭
+	newLogger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel)).Sugar()
+
 	// Drain and close any previous logger so a hot-reload of log level
 	// (or log file path) does not leak the previous file descriptor.
 	if Log != nil {
@@ -68,18 +76,22 @@ func Init(level string, logFile string) error {
 		closer = nil
 	}
 
-	Log = zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel)).Sugar()
+	Log = newLogger
 	closer = fileWriter
 	return nil
 }
 
 func Sync() {
+	logMu.Lock()
+	defer logMu.Unlock()
 	if Log != nil {
 		_ = Log.Sync()
 	}
 }
 
 func Close() {
+	logMu.Lock()
+	defer logMu.Unlock()
 	if Log != nil {
 		_ = Log.Sync()
 	}

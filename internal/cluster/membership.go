@@ -191,20 +191,25 @@ func (m *Membership) GetSnapshot() []Node {
 
 func (m *Membership) CheckTimeouts(timeout time.Duration) []string {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	var expired []string
+	var expiredNodes []Node
 	now := time.Now()
 	for id, node := range m.members {
 		if node.IsOnline() && now.Sub(node.LastSeen) > timeout {
 			node.MarkOffline()
 			expired = append(expired, id)
+			expiredNodes = append(expiredNodes, *node)
 		}
 	}
 
 	for _, id := range expired {
-		node := *m.members[id]
 		delete(m.members, id)
+	}
+	m.mu.Unlock()
+
+	// 释放锁后再发送事件，避免持锁回调导致死锁
+	for _, node := range expiredNodes {
 		m.emitEvent(ClusterEvent{
 			Type:      EventNodeLeave,
 			Node:      node,

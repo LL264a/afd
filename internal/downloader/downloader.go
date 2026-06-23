@@ -56,8 +56,12 @@ type Downloader struct {
 
 	pieceMgr *PieceManager
 
-	saveMu sync.Mutex
-	cfMu   sync.Mutex
+	saveMu     sync.Mutex
+	cfMu       sync.Mutex
+	rateMu     sync.Mutex
+	pieceMgrMu sync.RWMutex
+	altURLsMu  sync.Mutex
+	retryMu    sync.Mutex
 
 	adaptive *adaptiveController
 
@@ -93,6 +97,10 @@ func getGlobalTorrentDownloader(cfg *config.DownloadConfig, logger *zap.SugaredL
 func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downloader {
 	if cfg == nil {
 		cfg = config.DefaultDownloadConfig()
+	}
+
+	if cfg.BufferSize <= 0 {
+		cfg.BufferSize = 32 * 1024 // 默认 32KB
 	}
 
 	jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
@@ -251,7 +259,9 @@ func NewDownloaderFromURL(url, outputPath string, cfg *config.DownloadConfig, lo
 
 func (d *Downloader) SetURL(url string) {
 	d.url = url
-	d.loadCookies()
+	if err := d.loadCookies(); err != nil {
+		d.logger.Warnw("load cookies failed", "error", err)
+	}
 }
 
 func (d *Downloader) SetOutputPath(path string) {
@@ -263,6 +273,8 @@ func (d *Downloader) SetControlFilePath(path string) {
 }
 
 func (d *Downloader) SetControlFile(cf interface{}) {
+	d.cfMu.Lock()
+	defer d.cfMu.Unlock()
 	if cf == nil {
 		d.controlFile = nil
 		return
@@ -290,7 +302,9 @@ func (d *Downloader) LoadProgress(ctx context.Context) error {
 		return fmt.Errorf("load control file: %w", err)
 	}
 
+	d.cfMu.Lock()
 	d.controlFile = cf
+	d.cfMu.Unlock()
 	d.logger.Infow("loaded progress from control file",
 		"completed_length", cf.CompletedLength,
 		"total_length", cf.TotalLength,
@@ -316,7 +330,7 @@ func (d *Downloader) SaveProgress() error {
 
 	// CompletedLength 用 totalDownloaded（实际写入字节数），pieceBitfields 用于精确续传
 	d.controlFile.CompletedLength = atomic.LoadInt64(&d.totalDownloaded)
-	d.controlFile.TotalLength = d.fileSize
+	d.controlFile.TotalLength = atomic.LoadInt64(&d.fileSize)
 	d.controlFile.UpdatedAt = time.Now()
 
 	// 序列化 Piece 级 Block 位图（用于精确续传）
@@ -373,14 +387,16 @@ func (d *Downloader) OutputPath() string {
 }
 
 func (d *Downloader) FileSize() int64 {
-	return d.fileSize
+	return atomic.LoadInt64(&d.fileSize)
 }
 
 func (d *Downloader) Download(ctx context.Context) error {
 	d.startTime = time.Now()
+	d.swMu.Lock()
 	d.lastSaveTime = time.Now()
+	d.swMu.Unlock()
 
-	return DoWithRetryWithLogger(ctx, d.retryConfig, d.logger, func() error {
+	return DoWithRetryWithLogger(ctx, d.GetRetryConfig(), d.logger, func() error {
 		return d.doDownload(ctx)
 	})
 }
@@ -391,6 +407,10 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 	var doneOnce sync.Once
 	defer doneOnce.Do(func() { close(done) })
 
+	if d.cfg.MaxConnections <= 0 {
+		return fmt.Errorf("MaxConnections must be positive, got %d", d.cfg.MaxConnections)
+	}
+
 	if err := d.LoadProgress(ctx); err != nil {
 		d.logger.Warnw("failed to load progress", "error", err)
 	}
@@ -399,7 +419,7 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("head request: %w", err)
 	}
-	d.fileSize = fileSize
+	atomic.StoreInt64(&d.fileSize, fileSize)
 
 	d.logger.Infow("starting download",
 		"file_size", fileSize,
@@ -724,21 +744,26 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 				}
 
 				if err != nil {
-					errOnce.Do(func() {
-						downloadErr = err
-						workerCancel()
-					})
-					d.logger.Errorw("piece download failed",
-						"piece_index", piece.Index,
-						"start", piece.Start,
-						"length", piece.Length,
-						"error", err,
-					)
-					if err := d.SaveProgress(); err != nil {
-						d.logger.Errorw("failed to save progress", "error", err)
-					}
-					return
+				errOnce.Do(func() {
+					downloadErr = err
+					workerCancel()
+				})
+				d.logger.Errorw("piece download failed",
+					"piece_index", piece.Index,
+					"start", piece.Start,
+					"length", piece.Length,
+					"error", err,
+				)
+				// 重置 piece 状态，允许后续重试
+				if d.pieceMgr != nil {
+					piece.SetStatus(PieceIdle)
+					piece.SetOwner(0)
 				}
+				if err := d.SaveProgress(); err != nil {
+					d.logger.Errorw("failed to save progress", "error", err)
+				}
+				return
+			}
 			}
 		}()
 	}
@@ -775,7 +800,7 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 	}
 
 	d.logger.Infow("download completed",
-		"total_bytes", d.fileSize,
+		"total_bytes", atomic.LoadInt64(&d.fileSize),
 		"duration", time.Since(d.startTime),
 	)
 
@@ -885,7 +910,7 @@ func (d *Downloader) prepareChunks(fileSize int64) []*Chunk {
 
 func (d *Downloader) downloadChunk(ctx context.Context, file *os.File, chunk *Chunk) error {
 	urls := []string{d.url}
-	urls = append(urls, d.altURLs...)
+	urls = append(urls, d.getAltURLs()...)
 
 	backoff := time.Second
 	maxBackoff := 30 * time.Second
@@ -969,8 +994,8 @@ func (d *Downloader) downloadChunkOnceFromURL(ctx context.Context, file *os.File
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			if d.rateLimiter != nil {
-				if err := d.rateLimiter.Wait(ctx, int64(n)); err != nil {
+			if rl := d.getRateLimiter(); rl != nil {
+				if err := rl.Wait(ctx, int64(n)); err != nil {
 					return fmt.Errorf("rate limit: %w", err)
 				}
 			}
@@ -1006,7 +1031,7 @@ func (d *Downloader) downloadChunkOnceFromURL(ctx context.Context, file *os.File
 // endOffset 是动态 Range 结束位置（aria2 风格：如果下一个 piece 空闲，可扩展到文件末尾）
 func (d *Downloader) downloadPiece(ctx context.Context, file *os.File, piece *Piece, endOffset int64, pm *PieceManager) error {
 	urls := []string{d.url}
-	urls = append(urls, d.altURLs...)
+	urls = append(urls, d.getAltURLs()...)
 
 	backoff := time.Second
 	maxBackoff := 30 * time.Second
@@ -1067,6 +1092,7 @@ func (d *Downloader) downloadPiece(ctx context.Context, file *os.File, piece *Pi
 
 // downloadPieceOnceFromURL 从指定 URL 下载一个 Piece 的一次尝试
 func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File, piece *Piece, endOffset int64, pm *PieceManager, downloadURL string, minSpeed int64, minSpeedTimeout time.Duration) error {
+	buf := make([]byte, d.cfg.BufferSize)
 	// 使用 block 级别下载
 	for {
 		select {
@@ -1105,8 +1131,9 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 			rangeEnd = endOffset
 		}
 		// 不超过文件大小
-		if rangeEnd > d.fileSize-1 {
-			rangeEnd = d.fileSize - 1
+		fileSize := atomic.LoadInt64(&d.fileSize)
+		if rangeEnd > fileSize-1 {
+			rangeEnd = fileSize - 1
 		}
 
 		req, err := d.newGetRequest(ctx, downloadURL)
@@ -1140,7 +1167,6 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 		lowSpeedStart := time.Now()
 		lowSpeedDetected := false
 
-		buf := make([]byte, d.cfg.BufferSize)
 		currentOffset := blockOffset
 		currentBlockIdx := piece.BlockIndexForOffset(blockOffset)
 		remainingInBlock := blockLength
@@ -1148,8 +1174,8 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 		for {
 			n, readErr := resp.Body.Read(buf)
 			if n > 0 {
-				if d.rateLimiter != nil {
-					if err := d.rateLimiter.Wait(ctx, int64(n)); err != nil {
+				if rl := d.getRateLimiter(); rl != nil {
+					if err := rl.Wait(ctx, int64(n)); err != nil {
 						resp.Body.Close()
 						piece.CancelBlock(currentBlockIdx)
 						return fmt.Errorf("rate limit: %w", err)
@@ -1215,14 +1241,14 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 				if nextOffset < 0 {
 					// 没有更多 block 可获取，但 piece 未完成（其他 goroutine 在下载剩余 block）
 					resp.Body.Close()
-					return nil
+					break // 跳出内层循环，外层循环检查 piece 是否完成
 				}
 
 				// 如果下一个 block 的偏移量与当前写入位置不连续，不能继续用同一 HTTP 响应
 				// 否则数据会写错位置（P0 数据损坏）
 				if nextOffset != currentOffset {
 					resp.Body.Close()
-					return nil
+					break // 跳出内层循环，外层循环重新获取 block
 				}
 
 				currentBlockIdx = piece.BlockIndexForOffset(nextOffset)
@@ -1233,15 +1259,19 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 			}
 
 			if readErr != nil {
-				resp.Body.Close()
-				if readErr == io.EOF {
-					// EOF 时标记当前 block 完成（数据已写入文件）
-					piece.CompleteBlock(currentBlockIdx)
-					if piece.IsComplete() {
-						pm.CompletePiece(piece.Index)
-					}
-					return nil
+			resp.Body.Close()
+			if readErr == io.EOF {
+				if remainingInBlock > 0 {
+					// block 未完整下载，不标记完成
+					return fmt.Errorf("short read: block %d incomplete, %d bytes remaining", currentBlockIdx, remainingInBlock)
 				}
+				// EOF 时标记当前 block 完成（数据已写入文件）
+				piece.CompleteBlock(currentBlockIdx)
+				if piece.IsComplete() {
+					pm.CompletePiece(piece.Index)
+				}
+				return nil
+			}
 				if ctx.Err() != nil {
 					piece.CancelBlock(currentBlockIdx)
 					return ctx.Err()
@@ -1260,7 +1290,7 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 // downloadRange 下载一个偷来的范围（segment stealing），并将数据写入文件
 func (d *Downloader) downloadRange(ctx context.Context, file *os.File, start, end int64, piece *Piece) error {
 	urls := []string{d.url}
-	urls = append(urls, d.altURLs...)
+	urls = append(urls, d.getAltURLs()...)
 
 	backoff := time.Second
 	maxBackoff := 30 * time.Second
@@ -1339,8 +1369,8 @@ func (d *Downloader) downloadRangeOnceFromURL(ctx context.Context, file *os.File
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			if d.rateLimiter != nil {
-				if err := d.rateLimiter.Wait(ctx, int64(n)); err != nil {
+			if rl := d.getRateLimiter(); rl != nil {
+				if err := rl.Wait(ctx, int64(n)); err != nil {
 					return fmt.Errorf("rate limit: %w", err)
 				}
 			}
@@ -1356,17 +1386,6 @@ func (d *Downloader) downloadRangeOnceFromURL(ctx context.Context, file *os.File
 
 			if d.shouldSaveProgress(written) {
 				d.SaveProgress()
-			}
-
-			// 标记本次写入涉及的所有 block 为完成
-			writeStart := currentOffset - written
-			writeEnd := currentOffset - 1
-			if writeEnd >= writeStart {
-				startBlock := piece.BlockIndexForOffset(writeStart)
-				endBlock := piece.BlockIndexForOffset(writeEnd)
-				for i := startBlock; i <= endBlock; i++ {
-					piece.CompleteBlock(i)
-				}
 			}
 		}
 
@@ -1456,16 +1475,20 @@ func (d *Downloader) Speed() int64 {
 }
 
 func (d *Downloader) Progress() float64 {
-	if d.fileSize <= 0 {
+	fileSize := atomic.LoadInt64(&d.fileSize)
+	if fileSize <= 0 {
 		return 0
 	}
 	// 优先使用 PieceManager 的精确进度
-	if d.pieceMgr != nil {
-		completed := d.pieceMgr.TotalCompletedLength()
-		return float64(completed) / float64(d.fileSize) * 100
+	d.pieceMgrMu.RLock()
+	pm := d.pieceMgr
+	d.pieceMgrMu.RUnlock()
+	if pm != nil {
+		completed := pm.TotalCompletedLength()
+		return float64(completed) / float64(fileSize) * 100
 	}
 	downloaded := atomic.LoadInt64(&d.totalDownloaded)
-	return float64(downloaded) / float64(d.fileSize) * 100
+	return float64(downloaded) / float64(fileSize) * 100
 }
 
 func (d *Downloader) TotalDownloaded() int64 {
@@ -1479,32 +1502,37 @@ func (d *Downloader) ActiveThreads() int32 {
 func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 	// 使用 controlFile 判断续传进度
 	existingSize := int64(0)
+	d.cfMu.Lock()
 	if d.controlFile != nil && d.controlFile.CompletedLength > 0 {
 		existingSize = d.controlFile.CompletedLength
-		if existingSize >= d.fileSize && d.fileSize > 0 {
+	}
+	d.cfMu.Unlock()
+	fileSize := atomic.LoadInt64(&d.fileSize)
+	if existingSize > 0 {
+		if existingSize >= fileSize && fileSize > 0 {
 			stat, err := os.Stat(d.outputPath)
-			if err == nil && stat.Size() == d.fileSize {
+			if err == nil && stat.Size() == fileSize {
 				d.logger.Infow("file already fully downloaded, skipping")
-				atomic.StoreInt64(&d.totalDownloaded, d.fileSize)
+				atomic.StoreInt64(&d.totalDownloaded, fileSize)
 				return nil
 			}
 			existingSize = 0
 		}
-		if existingSize > 0 && existingSize < d.fileSize {
+		if existingSize > 0 && existingSize < fileSize {
 			d.logger.Infow("resuming single-thread download",
 				"completed_length", existingSize,
-				"total_size", d.fileSize,
+				"total_size", fileSize,
 			)
 			return d.singleThreadResume(ctx, existingSize)
 		}
 	} else {
 		// 没有 controlFile，检查本地文件
 		stat, err := os.Stat(d.outputPath)
-		if err == nil && stat.Size() > 0 && stat.Size() < d.fileSize {
+		if err == nil && stat.Size() > 0 && stat.Size() < fileSize {
 			existingSize = stat.Size()
 			d.logger.Infow("resuming single-thread download from local file",
 				"existing_size", existingSize,
-				"total_size", d.fileSize,
+				"total_size", fileSize,
 			)
 			return d.singleThreadResume(ctx, existingSize)
 		}
@@ -1555,8 +1583,8 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			if d.rateLimiter != nil {
-				if err := d.rateLimiter.Wait(ctx, int64(n)); err != nil {
+			if rl := d.getRateLimiter(); rl != nil {
+				if err := rl.Wait(ctx, int64(n)); err != nil {
 					if err := d.SaveProgress(); err != nil {
 						d.logger.Errorw("failed to save progress", "error", err)
 					}
@@ -1671,8 +1699,8 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			if d.rateLimiter != nil {
-				if err := d.rateLimiter.Wait(ctx, int64(n)); err != nil {
+			if rl := d.getRateLimiter(); rl != nil {
+				if err := rl.Wait(ctx, int64(n)); err != nil {
 					if err := d.SaveProgress(); err != nil {
 						d.logger.Errorw("failed to save progress", "error", err)
 					}
@@ -1722,7 +1750,15 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 	return nil
 }
 
+func (d *Downloader) getRateLimiter() *RateLimiter {
+	d.rateMu.Lock()
+	defer d.rateMu.Unlock()
+	return d.rateLimiter
+}
+
 func (d *Downloader) SetRateLimit(rate int64) {
+	d.rateMu.Lock()
+	defer d.rateMu.Unlock()
 	if d.rateLimiter == nil && rate > 0 {
 		d.rateLimiter = NewRateLimiter(rate, rate)
 		return
@@ -1734,17 +1770,22 @@ func (d *Downloader) SetRateLimit(rate int64) {
 }
 
 func (d *Downloader) GetRateLimit() int64 {
-	if d.rateLimiter == nil {
+	rl := d.getRateLimiter()
+	if rl == nil {
 		return 0
 	}
-	return d.rateLimiter.GetRate()
+	return rl.GetRate()
 }
 
 func (d *Downloader) SetRetryConfig(config RetryConfig) {
+	d.retryMu.Lock()
+	defer d.retryMu.Unlock()
 	d.retryConfig = config
 }
 
 func (d *Downloader) GetRetryConfig() RetryConfig {
+	d.retryMu.Lock()
+	defer d.retryMu.Unlock()
 	return d.retryConfig
 }
 
@@ -1814,10 +1855,20 @@ func (d *Downloader) SetCookieFile(path string) {
 }
 
 func (d *Downloader) SetAltURLs(urls []string) {
+	d.altURLsMu.Lock()
+	defer d.altURLsMu.Unlock()
 	d.altURLs = urls
 }
 
 func (d *Downloader) GetAltURLs() []string {
+	d.altURLsMu.Lock()
+	defer d.altURLsMu.Unlock()
+	return d.altURLs
+}
+
+func (d *Downloader) getAltURLs() []string {
+	d.altURLsMu.Lock()
+	defer d.altURLsMu.Unlock()
 	return d.altURLs
 }
 

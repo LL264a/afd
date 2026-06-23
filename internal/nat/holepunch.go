@@ -269,10 +269,10 @@ func (h *HolePuncher) GetConn() *net.UDPConn {
 func (h *HolePuncher) Stop() {
 	h.stopOnce.Do(func() {
 		close(h.stopCh)
+		if h.conn != nil {
+			h.conn.Close()
+		}
 	})
-	if h.conn != nil {
-		h.conn.Close()
-	}
 }
 
 func encodeHolePunchMessage(msg HolePunchMessage) []byte {

@@ -146,6 +146,15 @@ func (c *DownloadConfig) Validate() error {
 	if c.RetryCount < 0 || c.RetryCount > 100 {
 		return fmt.Errorf("retry_count must be between 0 and 100")
 	}
+	if c.MinSpeedTimeout < 0 {
+		return fmt.Errorf("min_speed_timeout must be non-negative")
+	}
+	if c.MaxPerServerConn < 0 {
+		return fmt.Errorf("max_per_server_conn must be non-negative")
+	}
+	if c.SpeedLimit < 0 {
+		return fmt.Errorf("speed_limit must be non-negative")
+	}
 	if c.BT != nil {
 		if err := c.BT.Validate(); err != nil {
 			return fmt.Errorf("bt config: %w", err)
@@ -223,6 +232,12 @@ type NATConfig struct {
 }
 
 func (c *NATConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.STUNServer == "" && c.SignalingServer == "" && c.RelayServer == "" {
+		return fmt.Errorf("NAT enabled but no STUN/signaling/relay server configured")
+	}
 	return nil
 }
 
@@ -438,6 +453,8 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("NEXUS_API_PORT"); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {
 			cfg.API.Port = port
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_API_PORT: %s\n", v)
 		}
 	}
 	if v := os.Getenv("NEXUS_API_AUTH_TOKEN"); v != "" {
@@ -446,36 +463,50 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("NEXUS_API_RATE_LIMIT"); v != "" {
 		if limit, err := strconv.Atoi(v); err == nil {
 			cfg.API.RateLimit = limit
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_API_RATE_LIMIT: %s\n", v)
 		}
 	}
 	if v := os.Getenv("NEXUS_CLUSTER_GRPC_PORT"); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {
 			cfg.Cluster.GRPCPort = port
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_CLUSTER_GRPC_PORT: %s\n", v)
 		}
 	}
 	if v := os.Getenv("NEXUS_CLUSTER_DISCOVERY_PORT"); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {
 			cfg.Cluster.DiscoveryPort = port
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_CLUSTER_DISCOVERY_PORT: %s\n", v)
 		}
 	}
 	if v := os.Getenv("NEXUS_DOWNLOAD_MAX_CONNECTIONS"); v != "" {
 		if conn, err := strconv.Atoi(v); err == nil {
 			cfg.Download.MaxConnections = conn
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_DOWNLOAD_MAX_CONNECTIONS: %s\n", v)
 		}
 	}
 	if v := os.Getenv("NEXUS_DOWNLOAD_TIMEOUT"); v != "" {
 		if timeout, err := strconv.Atoi(v); err == nil {
 			cfg.Download.Timeout = time.Duration(timeout) * time.Second
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_DOWNLOAD_TIMEOUT: %s\n", v)
 		}
 	}
 	if v := os.Getenv("NEXUS_DOWNLOAD_RETRY_COUNT"); v != "" {
 		if count, err := strconv.Atoi(v); err == nil {
 			cfg.Download.RetryCount = count
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_DOWNLOAD_RETRY_COUNT: %s\n", v)
 		}
 	}
 	if v := os.Getenv("NEXUS_DOWNLOAD_SPEED_LIMIT"); v != "" {
 		if limit, err := strconv.ParseInt(v, 10, 64); err == nil {
 			cfg.Download.SpeedLimit = limit
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_DOWNLOAD_SPEED_LIMIT: %s\n", v)
 		}
 	}
 }

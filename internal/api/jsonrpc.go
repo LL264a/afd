@@ -62,8 +62,8 @@ func NewJSONRPCServer(taskQueue *task.TaskQueue, taskStore *task.TaskStore, cfg 
 }
 
 func (s *JSONRPCServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost && r.Method != http.MethodGet {
-		sendJSONRPCError(w, nil, http.StatusMethodNotAllowed, -32600, "Method not allowed")
+	if r.Method != http.MethodPost {
+		sendJSONRPCError(w, nil, http.StatusMethodNotAllowed, -32600, "Invalid request: only POST is allowed")
 		return
 	}
 
@@ -350,7 +350,9 @@ func (s *JSONRPCServer) addTorrent(params []interface{}) (interface{}, error) {
 	}
 
 	t := task.NewTask(torrentB64, s.outputDir(options))
-	s.applyOptions(t, options)
+	if err := s.applyOptions(t, options); err != nil {
+		return nil, newJSONRPCError(-1, err)
+	}
 	if err := s.taskQueue.Add(t); err != nil {
 		return nil, newJSONRPCError(-1, err)
 	}
@@ -733,6 +735,10 @@ func (s *JSONRPCServer) multicall(params []interface{}) (interface{}, error) {
 	if !ok {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Invalid multicall params"))
 	}
+	// 限制调用数量，防止通过大量调用消耗资源
+	if len(calls) > 32 {
+		return nil, newJSONRPCError(-32603, fmt.Errorf("Too many multicall requests (max 32)"))
+	}
 	results := make([]interface{}, 0, len(calls))
 	for _, c := range calls {
 		callMap, ok := c.(map[string]interface{})
@@ -741,6 +747,11 @@ func (s *JSONRPCServer) multicall(params []interface{}) (interface{}, error) {
 			continue
 		}
 		methodName, _ := callMap["methodName"].(string)
+		// 拒绝嵌套 multicall，防止递归导致的栈溢出 DoS
+		if methodName == "system.multicall" {
+			results = append(results, map[string]interface{}{"error": map[string]interface{}{"code": -32600, "message": "Nested multicall is not allowed"}})
+			continue
+		}
 		callParamsRaw, _ := callMap["params"].([]interface{})
 		res, err := s.handleMethod(methodName, callParamsRaw)
 		entry := map[string]interface{}{}
@@ -827,9 +838,9 @@ func (s *JSONRPCServer) taskToStatus(t *task.Task, keys []string) map[string]int
 	return filtered
 }
 
-func (s *JSONRPCServer) applyOptions(t *task.Task, options map[string]interface{}) {
+func (s *JSONRPCServer) applyOptions(t *task.Task, options map[string]interface{}) error {
 	if options == nil {
-		return
+		return nil
 	}
 	if v, ok := options["dir"].(string); ok && v != "" {
 		if isSafePath(v) {
@@ -845,15 +856,26 @@ func (s *JSONRPCServer) applyOptions(t *task.Task, options map[string]interface{
 	if v, ok := options["priority"]; ok {
 		switch n := v.(type) {
 		case float64:
-			t.Priority = int(n)
+			priority := int(n)
+			if priority < 0 || priority > 10 {
+				return fmt.Errorf("Priority must be between 0 and 10")
+			}
+			t.Priority = priority
 		case int:
+			if n < 0 || n > 10 {
+				return fmt.Errorf("Priority must be between 0 and 10")
+			}
 			t.Priority = n
 		case string:
 			if i, err := strconv.Atoi(n); err == nil {
+				if i < 0 || i > 10 {
+					return fmt.Errorf("Priority must be between 0 and 10")
+				}
 				t.Priority = i
 			}
 		}
 	}
+	return nil
 }
 
 func (s *JSONRPCServer) outputDir(options map[string]interface{}) string {

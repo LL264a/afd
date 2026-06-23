@@ -18,6 +18,7 @@ const (
 	STUNSourceAddress    = 0x0004
 	STUNChangedAddress   = 0x0005
 	STUNXorMappedAddress = 0x0020
+	stunMagicCookie      = 0x2112A442
 )
 
 var DefaultSTUNServers = []string{
@@ -261,7 +262,8 @@ func (c *STUNClient) detectNATType(publicIP string, publicPort uint16) (NATType,
 }
 
 func (c *STUNClient) testChangeRequest() (net.IP, error) {
-	req := c.createBindingRequest()
+	req := make([]byte, 28) // 足够大以容纳 CHANGE-REQUEST attribute
+	copy(req, c.createBindingRequest())
 
 	attrOffset := 20
 	binary.BigEndian.PutUint16(req[attrOffset:attrOffset+2], STUNChangeRequest)

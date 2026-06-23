@@ -20,11 +20,12 @@ type SignalingMessage struct {
 }
 
 type SignalingServer struct {
-	addr   string
-	peers  map[string]*PeerInfo
-	mu     sync.RWMutex
-	conn   *net.UDPConn
-	stopCh chan struct{}
+	addr     string
+	peers    map[string]*PeerInfo
+	mu       sync.RWMutex
+	conn     *net.UDPConn
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 type PeerInfo struct {
@@ -155,10 +156,12 @@ func (s *SignalingServer) forwardMessage(msg *SignalingMessage, addr *net.UDPAdd
 }
 
 func (s *SignalingServer) Stop() {
-	close(s.stopCh)
-	if s.conn != nil {
-		s.conn.Close()
-	}
+	s.stopOnce.Do(func() {
+		close(s.stopCh)
+		if s.conn != nil {
+			s.conn.Close()
+		}
+	})
 }
 
 func NewSignalingClient(serverAddr, peerID string) *SignalingClient {

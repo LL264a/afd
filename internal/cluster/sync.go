@@ -91,10 +91,16 @@ func (s *StateSync) GetClusterState() *ClusterState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	state := *s.clusterState
+	// 深拷贝 Nodes map
 	state.Nodes = make(map[string]*NodeState)
 	for k, v := range s.clusterState.Nodes {
 		nodeState := *v
 		state.Nodes[k] = &nodeState
+	}
+	// 深拷贝 Tasks map，避免外部修改导致数据竞争
+	state.Tasks = make(map[string]string, len(s.clusterState.Tasks))
+	for k, v := range s.clusterState.Tasks {
+		state.Tasks[k] = v
 	}
 	return &state
 }
@@ -206,7 +212,9 @@ func (s *StateSync) MergeState(remoteState *ClusterState) {
 	for nodeID, remoteNode := range remoteState.Nodes {
 		localNode, exists := s.clusterState.Nodes[nodeID]
 		if !exists || remoteNode.LastSync.After(localNode.LastSync) {
-			s.clusterState.Nodes[nodeID] = remoteNode
+			// 深拷贝远程节点，避免共享远程指针导致数据竞争
+			nodeCopy := *remoteNode
+			s.clusterState.Nodes[nodeID] = &nodeCopy
 		}
 	}
 
