@@ -1,7 +1,6 @@
 package downloader
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha1"
 	"crypto/tls"
@@ -14,7 +13,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,30 +66,6 @@ type Downloader struct {
 	lastSaveTime  time.Time
 	sinceLastSave int64
 	saveInterval  time.Duration
-
-	diskCache *DiskCache
-}
-
-var globalTorrentDownloader *TorrentDownloader
-var torrentDownloaderOnce sync.Once
-var torrentDownloaderErr error
-
-func getGlobalTorrentDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) (*TorrentDownloader, error) {
-	torrentDownloaderOnce.Do(func() {
-		if cfg.BT == nil || !cfg.BT.Enabled {
-			torrentDownloaderErr = nil
-			return
-		}
-		btCfg := &BTConfig{
-			Enabled:            cfg.BT.Enabled,
-			DownloadSpeedLimit: cfg.BT.DownloadSpeedLimit,
-			UploadSpeedLimit:   cfg.BT.UploadSpeedLimit,
-			Port:               cfg.BT.Port,
-			DHTEnabled:         cfg.BT.DHTEnabled,
-		}
-		globalTorrentDownloader, torrentDownloaderErr = NewBTDownloader(btCfg, "", ""), nil
-	})
-	return globalTorrentDownloader, torrentDownloaderErr
 }
 
 func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downloader {
@@ -181,7 +155,6 @@ func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downl
 		adaptive:     newAdaptiveController(cfg.MaxConnections, 1),
 		saveInterval: 5 * time.Second,
 		rateLimiter:  rateLimiter,
-		diskCache:    NewDiskCache(),
 	}
 
 	return d
@@ -876,155 +849,20 @@ func (d *Downloader) getSizeViaGet(ctx context.Context) (int64, bool, error) {
 				}
 			}
 		}
+		if resp.ContentLength < 0 {
+			return 0, false, fmt.Errorf("unknown content length")
+		}
 		return resp.ContentLength + 1, true, nil
 	}
 
 	if resp.StatusCode == http.StatusOK {
+		if resp.ContentLength < 0 {
+			return 0, false, fmt.Errorf("unknown content length")
+		}
 		return resp.ContentLength, false, nil
 	}
 
 	return 0, false, fmt.Errorf("get request returned status: %d", resp.StatusCode)
-}
-
-func (d *Downloader) prepareChunks(fileSize int64) []*Chunk {
-	chunks := SplitFileIntoChunks(fileSize, d.cfg)
-
-	stat, err := os.Stat(d.outputPath)
-	if err == nil && stat.Size() > 0 {
-		for _, chunk := range chunks {
-			if stat.Size() > chunk.End {
-				chunk.Status = ChunkDone
-				chunk.Downloaded = chunk.Size()
-				atomic.AddInt64(&d.totalDownloaded, chunk.Size())
-			} else if stat.Size() > chunk.Start {
-				alreadyDownloaded := stat.Size() - chunk.Start
-				atomic.AddInt64(&d.totalDownloaded, alreadyDownloaded)
-				chunk.Start = stat.Size()
-				chunk.Downloaded = 0
-			}
-		}
-	}
-
-	return chunks
-}
-
-func (d *Downloader) downloadChunk(ctx context.Context, file *os.File, chunk *Chunk) error {
-	urls := []string{d.url}
-	urls = append(urls, d.getAltURLs()...)
-
-	backoff := time.Second
-	maxBackoff := 30 * time.Second
-
-	var lastErr error
-	for _, downloadURL := range urls {
-		for retry := 0; retry <= d.retryConfig.MaxRetries; retry++ {
-			if retry > 0 {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(backoff):
-				}
-				// 指数退避
-				backoff = time.Duration(float64(backoff) * 1.5)
-				if backoff > maxBackoff {
-					backoff = maxBackoff
-				}
-			}
-
-			err := d.downloadChunkOnceFromURL(ctx, file, chunk, downloadURL)
-			if err == nil {
-				return nil
-			}
-
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-
-			lastErr = err
-
-			// 416/404 等永久错误不重试
-			if IsPermanentError(err) {
-				d.logger.Warnw("permanent error, skipping retry",
-					"start", chunk.Start, "end", chunk.End, "error", err)
-				break
-			}
-
-			d.logger.Warnw("retrying chunk",
-				"retry", retry,
-				"start", chunk.Start,
-				"end", chunk.End,
-				"downloaded", chunk.Downloaded,
-				"error", err,
-			)
-		}
-		d.logger.Warnw("source failed, trying next", "url", downloadURL, "error", lastErr)
-	}
-
-	return fmt.Errorf("chunk download failed from all sources: %w", lastErr)
-}
-
-func (d *Downloader) downloadChunkOnce(ctx context.Context, file *os.File, chunk *Chunk) error {
-	return d.downloadChunkOnceFromURL(ctx, file, chunk, d.url)
-}
-
-func (d *Downloader) downloadChunkOnceFromURL(ctx context.Context, file *os.File, chunk *Chunk, downloadURL string) error {
-	req, err := d.newGetRequest(ctx, downloadURL)
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-
-	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", chunk.Start+chunk.Downloaded, chunk.End))
-
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
-		return fmt.Errorf("server does not support range requests (416)")
-	}
-
-	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	buf := make([]byte, d.cfg.BufferSize)
-
-	for {
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			if rl := d.getRateLimiter(); rl != nil {
-				if err := rl.Wait(ctx, int64(n)); err != nil {
-					return fmt.Errorf("rate limit: %w", err)
-				}
-			}
-
-			writeOffset := chunk.Start + chunk.Downloaded
-			if _, writeErr := file.WriteAt(buf[:n], writeOffset); writeErr != nil {
-				return fmt.Errorf("write chunk: %w", writeErr)
-			}
-
-			chunk.Downloaded += int64(n)
-			atomic.AddInt64(&d.totalDownloaded, int64(n))
-			d.recordSpeed(int64(n))
-
-			if d.shouldSaveProgress(int64(n)) {
-				d.SaveProgress()
-			}
-		}
-
-		if readErr != nil {
-			if readErr == io.EOF {
-				return nil
-			}
-			// context 取消导致的读错误直接传播
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return fmt.Errorf("read chunk: %w", readErr)
-		}
-	}
 }
 
 // downloadPiece 下载一个 Piece，使用 block 级别追踪完成状态
@@ -1227,7 +1065,9 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 					piece.CompleteBlock(currentBlockIdx)
 
 					if d.shouldSaveProgress(written) {
-						d.SaveProgress()
+						if err := d.SaveProgress(); err != nil {
+							d.logger.Errorw("failed to save progress", "error", err)
+						}
 					}
 
 					if piece.IsComplete() {
@@ -1385,7 +1225,9 @@ func (d *Downloader) downloadRangeOnceFromURL(ctx context.Context, file *os.File
 			d.recordSpeed(written)
 
 			if d.shouldSaveProgress(written) {
-				d.SaveProgress()
+				if err := d.SaveProgress(); err != nil {
+					d.logger.Errorw("failed to save progress", "error", err)
+				}
 			}
 		}
 
@@ -1455,6 +1297,10 @@ func (d *Downloader) Speed() int64 {
 	defer d.swMu.Unlock()
 
 	if d.swCount == 0 {
+		return 0
+	}
+
+	if d.swCount < 2 {
 		return 0
 	}
 
@@ -1826,30 +1672,6 @@ func (d *Downloader) loadCookies() error {
 	return nil
 }
 
-func (d *Downloader) saveCookies() error {
-	if d.cookieJar == nil {
-		return nil
-	}
-
-	path := d.getCookieFilePath()
-	file, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	if u, err := url.Parse(d.url); err == nil {
-		cookies := d.cookieJar.Cookies(u)
-		encoder := gob.NewEncoder(file)
-		if err := encoder.Encode(cookies); err != nil {
-			return err
-		}
-		d.logger.Debugw("Saved cookies", "count", len(cookies))
-	}
-
-	return nil
-}
-
 func (d *Downloader) SetCookieFile(path string) {
 	d.cookieFile = path
 }
@@ -1879,156 +1701,6 @@ func (d *Downloader) SetInsecure(insecure bool) {
 			transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 		}
 	}
-}
-
-type DiskCache struct {
-	cacheDir string
-	maxSize  int64
-	curSize  int64
-	cacheMap map[string]*cacheItem
-	mu       sync.Mutex
-}
-
-type ServerConnectionLimiter struct {
-	mu         sync.Mutex
-	connCounts map[string]int
-	maxConns   int
-	cond       *sync.Cond
-}
-
-func NewServerConnectionLimiter(maxConns int) *ServerConnectionLimiter {
-	limiter := &ServerConnectionLimiter{
-		connCounts: make(map[string]int),
-		maxConns:   maxConns,
-	}
-	limiter.cond = sync.NewCond(&limiter.mu)
-	return limiter
-}
-
-func (s *ServerConnectionLimiter) Acquire(server string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for s.connCounts[server] >= s.maxConns {
-		s.cond.Wait()
-	}
-	s.connCounts[server]++
-}
-
-func (s *ServerConnectionLimiter) Release(server string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.connCounts[server]--
-	if s.connCounts[server] < 0 {
-		s.connCounts[server] = 0
-	}
-	s.cond.Broadcast()
-}
-
-type cacheItem struct {
-	path     string
-	size     int64
-	lastUsed time.Time
-}
-
-func NewDiskCache() *DiskCache {
-	return &DiskCache{
-		cacheDir: filepath.Join(os.TempDir(), "nexus-dl-cache"),
-		maxSize:  1024 * 1024 * 1024,
-		cacheMap: make(map[string]*cacheItem),
-	}
-}
-
-func (c *DiskCache) ensureCacheDir() error {
-	return os.MkdirAll(c.cacheDir, 0755)
-}
-
-func (c *DiskCache) getCachePath(key string) string {
-	hash := sha1.Sum([]byte(key))
-	return filepath.Join(c.cacheDir, fmt.Sprintf("%x", hash))
-}
-
-func (c *DiskCache) Get(key string) (io.ReadCloser, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	item, ok := c.cacheMap[key]
-	if !ok {
-		return nil, os.ErrNotExist
-	}
-
-	item.lastUsed = time.Now()
-	return os.Open(item.path)
-}
-
-func (c *DiskCache) Put(key string, data io.Reader) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if err := c.ensureCacheDir(); err != nil {
-		return err
-	}
-
-	path := c.getCachePath(key)
-	file, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	writer := bufio.NewWriter(file)
-	size, err := io.Copy(writer, data)
-	if err != nil {
-		return err
-	}
-	writer.Flush()
-
-	c.cacheMap[key] = &cacheItem{
-		path:     path,
-		size:     size,
-		lastUsed: time.Now(),
-	}
-	c.curSize += size
-
-	c.evictIfNeeded()
-	return nil
-}
-
-func (c *DiskCache) evictIfNeeded() {
-	if c.curSize <= c.maxSize {
-		return
-	}
-
-	keys := make([]string, 0, len(c.cacheMap))
-	for k := range c.cacheMap {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		return c.cacheMap[keys[i]].lastUsed.Before(c.cacheMap[keys[j]].lastUsed)
-	})
-
-	for _, key := range keys {
-		item := c.cacheMap[key]
-		os.Remove(item.path)
-		c.curSize -= item.size
-		delete(c.cacheMap, key)
-		if c.curSize <= c.maxSize*3/4 {
-			break
-		}
-	}
-}
-
-func (c *DiskCache) Clear() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	for _, item := range c.cacheMap {
-		os.Remove(item.path)
-	}
-	c.cacheMap = make(map[string]*cacheItem)
-	c.curSize = 0
-	return os.RemoveAll(c.cacheDir)
 }
 
 func preallocateFile(file *os.File, size int64, sparse bool) error {

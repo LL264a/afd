@@ -80,13 +80,22 @@ type ErrorResponse struct {
 }
 
 func sendError(w http.ResponseWriter, code int, message string, details string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(ErrorResponse{
+	writeJSON(w, code, ErrorResponse{
 		Error:   message,
 		Code:    code,
 		Details: details,
 	})
+}
+
+// writeJSON writes a JSON response with the given status code. It sets
+// the Content-Type header and writes the status code before encoding,
+// and logs (instead of silently dropping) any encoding/write error.
+func writeJSON(w http.ResponseWriter, code int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		logger.Log.Warnw("failed to write JSON response", "error", err)
+	}
 }
 
 func isPrivateIP(host string) bool {
@@ -176,8 +185,7 @@ func NewServer(cfg *config.Config, taskQueue *task.TaskQueue, taskStore *task.Ta
 	apiMux.HandleFunc("/api/nodes", server.handleNodes)
 	apiMux.HandleFunc("/api/status", server.handleStatus)
 	apiMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"status":    "healthy",
 			"version":   server.version,
 			"uptime":    time.Since(server.startedAt).String(),
@@ -187,8 +195,7 @@ func NewServer(cfg *config.Config, taskQueue *task.TaskQueue, taskStore *task.Ta
 		})
 	})
 	apiMux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, http.StatusOK, map[string]string{
 			"status": "ready",
 		})
 	})
@@ -228,10 +235,8 @@ func NewServer(cfg *config.Config, taskQueue *task.TaskQueue, taskStore *task.Ta
 	// process so the binary can be deployed independently of the UI
 	// release cadence.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-NexusDL-Service", "core")
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
+		writeJSON(w, http.StatusNotFound, ErrorResponse{
 			Error: "NexusDL Core is a pure JSON/WebSocket API. Please deploy the UI separately from the ui/ repository.",
 			Code:  404,
 		})
@@ -288,8 +293,7 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	response.Tasks = tasks
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
@@ -320,7 +324,8 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Priority < 0 || req.Priority > 10 {
-		req.Priority = 5
+		sendError(w, http.StatusBadRequest, "Priority must be between 0 and 10", "")
+		return
 	}
 
 	newTask := task.NewTask(req.URL, req.OutputPath)
@@ -340,10 +345,8 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 
 	s.hub.BroadcastTaskUpdate(newTask)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
 	taskCopy := newTask.GetSafe()
-	json.NewEncoder(w).Encode(TaskResponse{Task: &taskCopy})
+	writeJSON(w, http.StatusCreated, TaskResponse{Task: &taskCopy})
 }
 
 func (s *Server) handleTaskByID(w http.ResponseWriter, r *http.Request) {
@@ -388,9 +391,8 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	taskCopy := t.GetSafe()
-	json.NewEncoder(w).Encode(TaskResponse{Task: &taskCopy})
+	writeJSON(w, http.StatusOK, TaskResponse{Task: &taskCopy})
 }
 
 func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request, id string) {
@@ -420,9 +422,8 @@ func (s *Server) pauseTask(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	s.hub.BroadcastTaskUpdate(t)
 
-	w.Header().Set("Content-Type", "application/json")
 	taskCopy := t.GetSafe()
-	json.NewEncoder(w).Encode(TaskResponse{Task: &taskCopy})
+	writeJSON(w, http.StatusOK, TaskResponse{Task: &taskCopy})
 }
 
 func (s *Server) resumeTask(w http.ResponseWriter, r *http.Request, id string) {
@@ -438,9 +439,8 @@ func (s *Server) resumeTask(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	s.hub.BroadcastTaskUpdate(t)
 
-	w.Header().Set("Content-Type", "application/json")
 	taskCopy := t.GetSafe()
-	json.NewEncoder(w).Encode(TaskResponse{Task: &taskCopy})
+	writeJSON(w, http.StatusOK, TaskResponse{Task: &taskCopy})
 }
 
 func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
@@ -454,8 +454,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	localNodeInfo := s.localNode.NodeInfo()
 	nodes = append(nodes, localNodeInfo.Node)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(NodeResponse{Nodes: nodes})
+	writeJSON(w, http.StatusOK, NodeResponse{Nodes: nodes})
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -477,8 +476,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Uptime:      time.Since(s.startedAt),
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -523,10 +521,15 @@ func (s *Server) handlePauseAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var failed []string
 	tasks := s.taskQueue.List()
 	for _, t := range tasks {
-		if t.Status == task.StatusDownloading || t.Status == task.StatusPending {
-			s.taskQueue.Pause(t.ID)
+		status := t.GetStatus()
+		if status == task.StatusDownloading || status == task.StatusPending {
+			if err := s.taskQueue.Pause(t.ID); err != nil {
+				failed = append(failed, t.ID)
+				logger.Log.Warnw("failed to pause task", "id", t.ID, "error", err)
+			}
 		}
 	}
 
@@ -540,10 +543,15 @@ func (s *Server) handleResumeAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var failed []string
 	tasks := s.taskQueue.List()
 	for _, t := range tasks {
-		if t.Status == task.StatusPaused {
-			s.taskQueue.Resume(t.ID)
+		status := t.GetStatus()
+		if status == task.StatusPaused {
+			if err := s.taskQueue.Resume(t.ID); err != nil {
+				failed = append(failed, t.ID)
+				logger.Log.Warnw("failed to resume task", "id", t.ID, "error", err)
+			}
 		}
 	}
 
@@ -558,8 +566,7 @@ type LogLevelRequest struct {
 func (s *Server) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, http.StatusOK, map[string]string{
 			"level": s.config.Node.LogLevel,
 		})
 	case http.MethodPost:
@@ -584,8 +591,7 @@ func (s *Server) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 		s.config.Node.LogLevel = req.Level
 		logger.Log.Infow("Log level updated", "level", req.Level)
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, http.StatusOK, map[string]string{
 			"status": "ok",
 			"level":  req.Level,
 		})
@@ -658,8 +664,7 @@ func (s *Server) handleReloadConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
 		"message": "Config reloaded successfully. Note: listener address, TLS settings, auth token, rate-limit, CORS and middleware chain require a process restart to take effect.",
 	})

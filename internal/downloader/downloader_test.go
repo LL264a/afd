@@ -43,24 +43,6 @@ func TestGlobalRateLimiter_TaskLimit(t *testing.T) {
 	grl.mu.Unlock()
 }
 
-func TestServerConnectionLimiter(t *testing.T) {
-	limiter := NewServerConnectionLimiter(2)
-	if limiter == nil {
-		t.Fatal("expected non-nil limiter")
-	}
-
-	limiter.Acquire("server-1")
-	limiter.Acquire("server-1")
-
-	go func() {
-		limiter.Release("server-1")
-	}()
-
-	limiter.Acquire("server-1")
-	limiter.Release("server-1")
-	limiter.Release("server-1")
-}
-
 func TestPreallocateFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	filePath := tmpDir + "/test_prealloc"

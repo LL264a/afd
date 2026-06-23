@@ -574,28 +574,11 @@ func (s *JSONRPCServer) getUris(params []interface{}) (interface{}, error) {
 }
 
 func (s *JSONRPCServer) changeGlobalOption(params []interface{}) (interface{}, error) {
-	options := paramMap(params, 0)
-	if options == nil {
-		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing options parameter"))
-	}
-	s.logger.Infow("changeGlobalOption", "options", options)
-	return "OK", nil
+	return nil, newJSONRPCError(-32603, fmt.Errorf("changeGlobalOption not yet implemented"))
 }
 
 func (s *JSONRPCServer) changeOption(params []interface{}) (interface{}, error) {
-	gid := paramString(params, 0)
-	if gid == "" {
-		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
-	}
-	options := paramMap(params, 1)
-	if options == nil {
-		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing options parameter"))
-	}
-	if _, err := s.taskQueue.Get(gid); err != nil {
-		return nil, newJSONRPCError(-1, fmt.Errorf("Task not found: %s", gid))
-	}
-	s.logger.Infow("changeOption", "gid", gid, "options", options)
-	return "OK", nil
+	return nil, newJSONRPCError(-32603, fmt.Errorf("changeOption not yet implemented"))
 }
 
 func (s *JSONRPCServer) getGlobalOption(_ []interface{}) (interface{}, error) {

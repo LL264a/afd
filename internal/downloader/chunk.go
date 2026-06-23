@@ -139,9 +139,12 @@ func (p *Piece) StealableRange(minSize int64) (offset int64, length int64) {
 		stealStartBlock = firstMissing
 	}
 
-	// 释放从 stealStartBlock 开始的所有 useBit（让新 goroutine 可以获取）
+	// 只释放未完成 block 的 useBit，已完成的 block 不受影响，
+	// 这样 stealer 可以获取未完成范围而不会破坏已下载数据。
 	for i := stealStartBlock; i < p.blocks.NumBlocks(); i++ {
-		p.blocks.UnsetUseBit(i)
+		if !p.blocks.IsBitSet(i) {
+			p.blocks.UnsetUseBit(i)
+		}
 	}
 
 	offset = p.Start + int64(stealStartBlock)*p.blocks.blockLength

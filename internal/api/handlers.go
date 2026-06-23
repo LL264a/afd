@@ -329,10 +329,14 @@ type NodeStatsResponse struct {
 }
 
 func (h *NodeHandler) GetNodeStats(w http.ResponseWriter, r *http.Request) {
+	offline := h.membership.MemberCount() - h.membership.OnlineCount()
+	if offline < 0 {
+		offline = 0
+	}
 	stats := NodeStatsResponse{
 		TotalNodes:   h.membership.MemberCount() + 1,
 		OnlineNodes:  h.membership.OnlineCount() + 1,
-		OfflineNodes: h.membership.MemberCount() - h.membership.OnlineCount(),
+		OfflineNodes: offline,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

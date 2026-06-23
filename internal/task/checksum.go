@@ -64,8 +64,11 @@ func (t *Task) VerifyDownload() (bool, error) {
 	outputPath := t.OutputPath
 	t.mu.RUnlock()
 
+	if checksumType == "" && checksumValue == "" {
+		return true, nil // 两者都为空，跳过校验
+	}
 	if checksumType == "" || checksumValue == "" {
-		return true, nil
+		return false, fmt.Errorf("checksum type and value must both be set or both be empty")
 	}
 
 	return VerifyChecksum(outputPath, checksumType, checksumValue)

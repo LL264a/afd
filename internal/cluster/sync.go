@@ -39,7 +39,6 @@ type StateSync struct {
 	localNodeID  string
 	logger       *zap.SugaredLogger
 	clusterState *ClusterState
-	stateChan    chan *ClusterState
 	wg           sync.WaitGroup
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -62,9 +61,8 @@ func NewStateSync(localNodeID string, cfg *config.Config) *StateSync {
 			Version: 0,
 			Updated: time.Now(),
 		},
-		stateChan: make(chan *ClusterState, 10),
-		ctx:       ctx,
-		cancel:    cancel,
+		ctx:    ctx,
+		cancel: cancel,
 	}
 }
 
@@ -83,7 +81,6 @@ func (s *StateSync) Start() {
 func (s *StateSync) Stop() {
 	s.cancel()
 	s.wg.Wait()
-	close(s.stateChan)
 	s.logger.Infof("State sync stopped for node %s", s.localNodeID)
 }
 
@@ -153,8 +150,6 @@ func (s *StateSync) syncLoop() {
 		select {
 		case <-s.ctx.Done():
 			return
-		case state := <-s.stateChan:
-			s.broadcastState(state)
 		case <-ticker.C:
 			s.performSync()
 		}
@@ -189,16 +184,6 @@ func (s *StateSync) syncWithRetry(state *ClusterState) error {
 		return nil
 	}
 	return lastErr
-}
-
-func (s *StateSync) broadcastState(state *ClusterState) {
-	if s.syncPeers != nil {
-		go func() {
-			if err := s.syncPeers(state); err != nil {
-				s.logger.Warnf("Failed to broadcast state: %v", err)
-			}
-		}()
-	}
 }
 
 func (s *StateSync) MergeState(remoteState *ClusterState) {

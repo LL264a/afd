@@ -131,17 +131,16 @@ type RPCResponse struct {
 }
 
 type RPCServer struct {
-	addr      string
-	listener  net.Listener
-	auth      *ClusterAuth
-	handler   RPCHandler
-	stopCh    chan struct{}
-	stopOnce  sync.Once
-	wg        sync.WaitGroup
-	requestID uint64
-	mu        sync.Mutex
-	running   bool
-	conns     map[net.Conn]struct{}
+	addr     string
+	listener net.Listener
+	auth     *ClusterAuth
+	handler  RPCHandler
+	stopCh   chan struct{}
+	stopOnce sync.Once
+	wg       sync.WaitGroup
+	mu       sync.Mutex
+	running  bool
+	conns    map[net.Conn]struct{}
 }
 
 type RPCHandler interface {
@@ -369,6 +368,9 @@ func (s *RPCServer) writeMessage(conn net.Conn, resp *RPCResponse) error {
 	data := buf.Bytes()
 	header := make([]byte, FrameHeaderSize)
 	binary.BigEndian.PutUint32(header, uint32(len(data)))
+
+	conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	defer conn.SetWriteDeadline(time.Time{})
 
 	if _, err := conn.Write(header); err != nil {
 		return err
@@ -703,19 +705,32 @@ func NewStreamingClient(addr string, auth *ClusterAuth) *StreamingClient {
 }
 
 func (sc *StreamingClient) StreamTaskProgress(req StreamTaskProgressRequest, callback func(StreamTaskProgressResponse) error) error {
-	// Serialize against any other Call/Stream on the same underlying
-	// connection: the request write and the read loop must both be
-	// guarded, otherwise concurrent callers would interleave on
-	// sc.conn.Read.
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-
-	if err := sc.connectLocked(); err != nil {
-		return err
+	// Use a dedicated connection for the streaming call so that the
+	// long-lived read loop neither holds sc.mu for the whole stream
+	// nor interleaves reads with concurrent Call() traffic on the
+	// shared RPC connection (sc.conn).  Sharing sc.conn while
+	// releasing the lock would let another Call write a request and
+	// then read a frame that this loop is consuming, corrupting the
+	// framed protocol.
+	var conn net.Conn
+	var err error
+	if sc.auth != nil && sc.auth.IsTLSEnabled() {
+		conn, err = sc.auth.DialTLS("tcp", sc.addr)
+	} else {
+		conn, err = net.DialTimeout("tcp", sc.addr, sc.timeout)
 	}
+	if err != nil {
+		return fmt.Errorf("failed to connect to %s: %w", sc.addr, err)
+	}
+	defer conn.Close()
 
+	// Reuse the shared reqID counter (under lock) to keep IDs unique
+	// across Call() and streaming requests.
+	sc.mu.Lock()
 	sc.reqID++
 	reqID := sc.reqID
+	sc.mu.Unlock()
+
 	rpcReq := &RPCRequest{
 		Method:    "StreamTaskProgress",
 		RequestID: reqID,
@@ -741,25 +756,19 @@ func (sc *StreamingClient) StreamTaskProgress(req StreamTaskProgressRequest, cal
 	header := make([]byte, FrameHeaderSize)
 	binary.BigEndian.PutUint32(header, uint32(len(data)))
 
-	if _, err := sc.conn.Write(header); err != nil {
-		sc.conn.Close()
-		sc.conn = nil
+	if _, err := conn.Write(header); err != nil {
 		return err
 	}
-	if _, err := sc.conn.Write(data); err != nil {
-		sc.conn.Close()
-		sc.conn = nil
+	if _, err := conn.Write(data); err != nil {
 		return err
 	}
 
 	for {
 		respHeader := make([]byte, FrameHeaderSize)
-		if _, err := io.ReadFull(sc.conn, respHeader); err != nil {
+		if _, err := io.ReadFull(conn, respHeader); err != nil {
 			if err == io.EOF {
 				return nil
 			}
-			sc.conn.Close()
-			sc.conn = nil
 			return err
 		}
 
@@ -769,9 +778,7 @@ func (sc *StreamingClient) StreamTaskProgress(req StreamTaskProgressRequest, cal
 		}
 
 		respBody := make([]byte, respLen)
-		if _, err := io.ReadFull(sc.conn, respBody); err != nil {
-			sc.conn.Close()
-			sc.conn = nil
+		if _, err := io.ReadFull(conn, respBody); err != nil {
 			return err
 		}
 

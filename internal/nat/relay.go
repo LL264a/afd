@@ -32,6 +32,7 @@ type RelayClient struct {
 	serverAddr string
 	stopCh     chan struct{}
 	stopOnce   sync.Once
+	mu         sync.RWMutex
 	connected  bool
 	relayAddr  string
 }
@@ -45,7 +46,6 @@ type RelayMessage struct {
 
 type Relay struct {
 	localConn  *net.UDPConn
-	remoteConn *net.UDPConn
 	localAddr  string
 	remoteAddr string
 	stopCh     chan struct{}
@@ -248,8 +248,10 @@ func (c *RelayClient) connect() error {
 	}
 
 	if response.Type == RelayConnectAck {
+		c.mu.Lock()
 		c.connected = true
 		c.relayAddr = c.serverAddr
+		c.mu.Unlock()
 		logger.Log.Infof("Connected to relay server")
 	}
 
@@ -288,7 +290,10 @@ func (c *RelayClient) handleMessages() {
 }
 
 func (c *RelayClient) Send(data []byte) error {
-	if !c.connected {
+	c.mu.RLock()
+	connected := c.connected
+	c.mu.RUnlock()
+	if !connected {
 		return ErrNotConnected
 	}
 
@@ -311,12 +316,17 @@ func (c *RelayClient) Send(data []byte) error {
 }
 
 func (c *RelayClient) IsConnected() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.connected
 }
 
 func (c *RelayClient) Stop() {
 	c.stopOnce.Do(func() {
-		if c.connected {
+		c.mu.RLock()
+		connected := c.connected
+		c.mu.RUnlock()
+		if connected {
 			msg := RelayMessage{
 				Type:     RelayClose,
 				ClientID: c.id,
@@ -419,7 +429,7 @@ func (r *Relay) IsActive() bool {
 }
 
 func encodeRelayMessage(msg RelayMessage) []byte {
-	headerLen := 8 + len(msg.ClientID)
+	headerLen := 6 + len(msg.ClientID)
 	dataLen := len(msg.Data)
 	totalLen := headerLen + dataLen
 
@@ -441,7 +451,7 @@ func encodeRelayMessage(msg RelayMessage) []byte {
 }
 
 func decodeRelayMessage(data []byte, msg *RelayMessage) error {
-	if len(data) < 8 {
+	if len(data) < 6 {
 		return ErrInvalidRelayMessage
 	}
 
