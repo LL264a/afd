@@ -1,7 +1,0 @@
-﻿package types // import "github.com/anacrolix/torrent/types"
-
-type PiecePriority byte
-    Describes the importance of obtaining a particular piece.
-
-const PiecePriorityNone PiecePriority = iota ...
-func (pp *PiecePriority) Raise(maybe PiecePriority) bool
