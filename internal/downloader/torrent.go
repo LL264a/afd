@@ -10,11 +10,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/anacrolix/dht/v2"
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/nexus-dl/afd/pkg/config"
 	"github.com/nexus-dl/afd/pkg/logger"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 )
 
 type BTConfig struct {
@@ -169,7 +171,29 @@ func createTorrentClient(cfg *BTConfig) (*torrent.Client, error) {
 		clientCfg.ListenPort = cfg.Port
 	}
 
-	// DHT 节点配置暂时简化处理
+	// DHT 引导节点注入：anacrolix/torrent 的 ClientConfig 没有 DHTNodes 字段，
+	// 而是通过 ClientDhtConfig.DhtStartingNodes 提供 StartingNodesGetter 回调。
+	// dht.ResolveHostPorts 将 "host:port" 字符串解析为 dht.Addr。
+	if cfg.DHTEnabled && len(cfg.DHTNodes) > 0 {
+		nodes := cfg.DHTNodes
+		clientCfg.DhtStartingNodes = func(network string) dht.StartingNodesGetter {
+			return func() ([]dht.Addr, error) {
+				return dht.ResolveHostPorts(nodes)
+			}
+		}
+	}
+
+	// TODO: Local Peer Discovery - anacrolix/torrent v1.58.1 的 ClientConfig
+	// 没有 DisableLocalPeerDiscovery 字段，暂无法通过配置控制本地对等节点发现。
+	// clientCfg.DisableLocalPeerDiscovery = !cfg.LocalPeerDiscovery
+
+	// 限速配置：每个 token 代表一个字节，burst 取限速值以容纳一个块（通常 16KiB）。
+	if cfg.DownloadSpeedLimit > 0 {
+		clientCfg.DownloadRateLimiter = rate.NewLimiter(rate.Limit(cfg.DownloadSpeedLimit), int(cfg.DownloadSpeedLimit))
+	}
+	if cfg.UploadSpeedLimit > 0 {
+		clientCfg.UploadRateLimiter = rate.NewLimiter(rate.Limit(cfg.UploadSpeedLimit), int(cfg.UploadSpeedLimit))
+	}
 
 	if cfg.DownloadSpeedLimit > 0 || cfg.UploadSpeedLimit > 0 {
 		clientCfg.EstablishedConnsPerTorrent = 50
@@ -179,8 +203,6 @@ func createTorrentClient(cfg *BTConfig) (*torrent.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create torrent client: %w", err)
 	}
-
-	// 限速功能暂不支持
 
 	return client, nil
 }
@@ -261,11 +283,31 @@ func (d *TorrentDownloader) Download(ctx context.Context) error {
 			}
 		}
 	} else if d.cfg.SequentialDownload {
+		// 顺序下载：给靠前的 piece 设置更高优先级，使其优先下载。
+		// anacrolix/torrent 的 PiecePriority 是枚举类型（None/Normal/High/Readahead/Next/Now），
+		// 不支持按 index 设置递增数值优先级，这里通过分段设置优先级来近似顺序下载。
+		numPieces := d.torrent.NumPieces()
+		highWatermark := numPieces / 10
+		if highWatermark < 1 {
+			highWatermark = 1
+		}
+		for i := 0; i < numPieces; i++ {
+			prio := torrent.PiecePriorityNormal
+			if i < highWatermark {
+				prio = torrent.PiecePriorityHigh
+			}
+			d.torrent.Piece(i).SetPriority(prio)
+		}
 		d.torrent.DownloadAll()
 	} else {
 		for _, f := range d.torrent.Files() {
 			f.SetPriority(torrent.PiecePriorityNormal)
 		}
+	}
+
+	// FirstPiecePriority：优先下载第一个 piece（用于快速预览）
+	if d.cfg.FirstPiecePriority && d.torrent.NumPieces() > 0 {
+		d.torrent.Piece(0).SetPriority(torrent.PiecePriorityHigh)
 	}
 
 	// Derived context for the monitor goroutine.  Cancelled in defer

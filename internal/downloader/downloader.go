@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"crypto/tls"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -25,6 +26,9 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
+// errNotModified 表示服务器返回 304 Not Modified，文件未修改
+var errNotModified = errors.New("resource not modified")
+
 type Downloader struct {
 	cfg               *config.DownloadConfig
 	retryConfig       RetryConfig
@@ -40,6 +44,10 @@ type Downloader struct {
 	torrentDownloader *TorrentDownloader
 	cookieJar         *cookiejar.Jar
 	cookieFile        string
+
+	conditionalGet bool   // 是否启用条件下载
+	lastModified   string // 上次下载的 Last-Modified
+	etag           string // 上次下载的 ETag
 
 	speedWindow []speedSample
 	swHead      int
@@ -145,16 +153,17 @@ func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downl
 	}
 
 	d := &Downloader{
-		cfg:          cfg,
-		retryConfig:  retryConfig,
-		client:       client,
-		logger:       logger,
-		proxy:        proxyCfg,
-		cookieJar:    jar,
-		speedWindow:  make([]speedSample, 20),
-		adaptive:     newAdaptiveController(cfg.MaxConnections, 1),
-		saveInterval: 5 * time.Second,
-		rateLimiter:  rateLimiter,
+		cfg:            cfg,
+		retryConfig:    retryConfig,
+		client:         client,
+		logger:         logger,
+		proxy:          proxyCfg,
+		cookieJar:      jar,
+		speedWindow:    make([]speedSample, 20),
+		adaptive:       newAdaptiveController(cfg.MaxConnections, 1),
+		saveInterval:   5 * time.Second,
+		rateLimiter:    rateLimiter,
+		conditionalGet: cfg.ConditionalGet,
 	}
 
 	return d
@@ -280,10 +289,14 @@ func (d *Downloader) LoadProgress(ctx context.Context) error {
 
 	d.cfMu.Lock()
 	d.controlFile = cf
+	d.lastModified = cf.LastModified
+	d.etag = cf.ETag
 	d.cfMu.Unlock()
 	d.logger.Infow("loaded progress from control file",
 		"completed_length", cf.CompletedLength,
 		"total_length", cf.TotalLength,
+		"has_last_modified", cf.LastModified != "",
+		"has_etag", cf.ETag != "",
 	)
 
 	return nil
@@ -308,6 +321,11 @@ func (d *Downloader) SaveProgress() error {
 	d.controlFile.CompletedLength = atomic.LoadInt64(&d.totalDownloaded)
 	d.controlFile.TotalLength = atomic.LoadInt64(&d.fileSize)
 	d.controlFile.UpdatedAt = time.Now()
+	// 持久化条件下载所需的 Last-Modified / ETag
+	if d.conditionalGet {
+		d.controlFile.LastModified = d.lastModified
+		d.controlFile.ETag = d.etag
+	}
 
 	// 序列化 Piece 级 Block 位图（用于精确续传）
 	if d.pieceMgr != nil {
@@ -417,7 +435,33 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 
 	fileSize, supportsRange, err := d.headRequest(ctx)
 	if err != nil {
-		return fmt.Errorf("head request: %w", err)
+		if errors.Is(err, errNotModified) {
+			// 文件未修改：检查本地文件是否存在
+			if stat, e := os.Stat(d.outputPath); e == nil && stat.Size() > 0 {
+				d.logger.Infow("file not modified since last download, skipping")
+				atomic.StoreInt64(&d.totalDownloaded, stat.Size())
+				atomic.StoreInt64(&d.fileSize, stat.Size())
+				d.cfMu.Lock()
+				if d.controlFile != nil {
+					d.controlFile.Status = "completed"
+				}
+				d.cfMu.Unlock()
+				if err := d.SaveProgress(); err != nil {
+					d.logger.Errorw("failed to save progress", "error", err)
+				}
+				return nil
+			}
+			// 本地文件不存在但服务器返回 304，清除条件头重新探测
+			d.logger.Warnw("server returned 304 but local file missing, re-probing without conditional headers")
+			d.lastModified = ""
+			d.etag = ""
+			fileSize, supportsRange, err = d.headRequest(ctx)
+			if err != nil {
+				return fmt.Errorf("head request: %w", err)
+			}
+		} else {
+			return fmt.Errorf("head request: %w", err)
+		}
 	}
 	atomic.StoreInt64(&d.fileSize, fileSize)
 
@@ -790,8 +834,8 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 		d.logger.Errorw("failed to save progress", "error", err)
 	}
 
-	// 下载完成后删除控制文件
-	if d.controlFilePath != "" {
+	// 下载完成后删除控制文件（启用条件下载时保留，以便下次使用 Last-Modified/ETag）
+	if d.controlFilePath != "" && !d.conditionalGet {
 		store := task.NewControlFileStore(filepath.Dir(d.controlFilePath))
 		taskID := strings.TrimSuffix(filepath.Base(d.controlFilePath), filepath.Ext(d.controlFilePath))
 		if err := store.Delete(taskID); err != nil && !strings.Contains(err.Error(), "not found") {
@@ -835,6 +879,16 @@ func (d *Downloader) headRequest(ctx context.Context) (int64, bool, error) {
 	}
 	req.Header.Set("User-Agent", "AFD/0.3")
 
+	// 条件下载：添加 If-Modified-Since / If-None-Match
+	if d.conditionalGet {
+		if d.lastModified != "" {
+			req.Header.Set("If-Modified-Since", d.lastModified)
+		}
+		if d.etag != "" {
+			req.Header.Set("If-None-Match", d.etag)
+		}
+	}
+
 	resp, err := d.client.Do(req)
 	if err != nil {
 		d.logger.Warnw("HEAD request failed, falling back to GET", "error", err)
@@ -842,9 +896,25 @@ func (d *Downloader) headRequest(ctx context.Context) (int64, bool, error) {
 	}
 	defer resp.Body.Close()
 
+	// 条件下载：304 表示文件未修改
+	if d.conditionalGet && resp.StatusCode == http.StatusNotModified {
+		d.logger.Infow("server returned 304 Not Modified, file unchanged")
+		return 0, false, errNotModified
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		d.logger.Warnw("HEAD request returned non-200, falling back to GET", "status", resp.StatusCode)
 		return d.getSizeViaGet(ctx)
+	}
+
+	// 捕获 Last-Modified 和 ETag 用于下次条件下载
+	if d.conditionalGet {
+		if lm := resp.Header.Get("Last-Modified"); lm != "" {
+			d.lastModified = lm
+		}
+		if et := resp.Header.Get("ETag"); et != "" {
+			d.etag = et
+		}
 	}
 
 	supportsRange := resp.Header.Get("Accept-Ranges") == "bytes"
@@ -1473,8 +1543,8 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 		d.logger.Errorw("failed to save progress", "error", err)
 	}
 
-	// 下载完成后删除控制文件
-	if d.controlFilePath != "" {
+	// 下载完成后删除控制文件（启用条件下载时保留，以便下次使用 Last-Modified/ETag）
+	if d.controlFilePath != "" && !d.conditionalGet {
 		store := task.NewControlFileStore(filepath.Dir(d.controlFilePath))
 		taskID := strings.TrimSuffix(filepath.Base(d.controlFilePath), filepath.Ext(d.controlFilePath))
 		if err := store.Delete(taskID); err != nil && !strings.Contains(err.Error(), "not found") {
@@ -1592,8 +1662,8 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 		d.logger.Errorw("failed to save progress", "error", err)
 	}
 
-	// 下载完成后删除控制文件
-	if d.controlFilePath != "" {
+	// 下载完成后删除控制文件（启用条件下载时保留，以便下次使用 Last-Modified/ETag）
+	if d.controlFilePath != "" && !d.conditionalGet {
 		store := task.NewControlFileStore(filepath.Dir(d.controlFilePath))
 		taskID := strings.TrimSuffix(filepath.Base(d.controlFilePath), filepath.Ext(d.controlFilePath))
 		if err := store.Delete(taskID); err != nil && !strings.Contains(err.Error(), "not found") {

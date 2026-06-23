@@ -122,6 +122,7 @@ type DownloadConfig struct {
 	UseDigestAuth       bool                 `json:"use_digest_auth" yaml:"use_digest_auth"`
 	Adaptive            bool                 `json:"adaptive" yaml:"adaptive"`
 	Insecure            bool                 `json:"insecure" yaml:"insecure"`
+	ConditionalGet      bool                 `json:"conditional_get" yaml:"conditional_get"`
 }
 
 func (c *DownloadConfig) Validate() error {
@@ -317,6 +318,7 @@ func DefaultDownloadConfig() *DownloadConfig {
 		UseDigestAuth:       false,
 		Adaptive:            false,
 		Insecure:            false,
+		ConditionalGet:      false,
 	}
 }
 
