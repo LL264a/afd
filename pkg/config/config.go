@@ -130,6 +130,7 @@ type DownloadConfig struct {
 	CustomHeaders    map[string]string `json:"custom_headers" yaml:"custom_headers"`
 	HTTPUsername     string            `json:"http_username" yaml:"http_username"`
 	HTTPPassword     string            `json:"http_password" yaml:"http_password"`
+	NoNetrc          bool              `json:"no_netrc" yaml:"no_netrc"`
 	AcceptGzip       bool              `json:"accept_gzip" yaml:"accept_gzip"`
 	DryRun           bool              `json:"dry_run" yaml:"dry_run"`
 	RemoteTime       bool              `json:"remote_time" yaml:"remote_time"`

@@ -44,6 +44,7 @@ type Downloader struct {
 	torrentDownloader *TorrentDownloader
 	cookieJar         *cookiejar.Jar
 	cookieFile        string
+	netrc             *Netrc
 
 	conditionalGet bool   // 是否启用条件下载
 	lastModified   string // 上次下载的 Last-Modified
@@ -171,6 +172,15 @@ func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downl
 		conditionalGet: cfg.ConditionalGet,
 	}
 
+	// 加载 netrc（除非显式禁用）
+	if !cfg.NoNetrc {
+		if netrc, err := LoadNetrc(""); err == nil {
+			d.netrc = netrc
+		} else if !os.IsNotExist(err) {
+			logger.Debugw("failed to load netrc", "error", err)
+		}
+	}
+
 	return d
 }
 
@@ -247,10 +257,19 @@ func NewDownloaderFromURL(url, outputPath string, cfg *config.DownloadConfig, lo
 	return d, nil
 }
 
-func (d *Downloader) SetURL(url string) {
-	d.url = url
+func (d *Downloader) SetURL(rawURL string) {
+	d.url = rawURL
 	if err := d.loadCookies(); err != nil {
 		d.logger.Warnw("load cookies failed", "error", err)
+	}
+	// 从 netrc 获取凭证（仅当未显式配置 HTTP 凭证时）
+	if d.netrc != nil && d.cfg.HTTPUsername == "" {
+		if u, err := url.Parse(d.url); err == nil && u != nil {
+			if user, pass := d.netrc.GetCredentials(u.Hostname()); user != "" {
+				d.cfg.HTTPUsername = user
+				d.cfg.HTTPPassword = pass
+			}
+		}
 	}
 }
 
@@ -1394,6 +1413,11 @@ func (d *Downloader) applyCustomHeaders(req *http.Request) {
 	}
 	if d.cfg.HTTPUsername != "" {
 		req.SetBasicAuth(d.cfg.HTTPUsername, d.cfg.HTTPPassword)
+	} else if d.netrc != nil && req.URL != nil {
+		// HTTPUsername 为空时，尝试从 netrc 按请求主机获取凭证
+		if user, pass := d.netrc.GetCredentials(req.URL.Hostname()); user != "" {
+			req.SetBasicAuth(user, pass)
+		}
 	}
 	if d.cfg.AcceptGzip {
 		req.Header.Set("Accept-Encoding", "gzip")

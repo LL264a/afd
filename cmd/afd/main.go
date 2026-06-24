@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -132,6 +134,8 @@ var (
 	adaptive   bool
 	insecure   bool
 	quiet      bool
+	noNetrc    bool
+	daemon     bool
 )
 
 var downloadCmd = &cobra.Command{
@@ -236,6 +240,10 @@ func doDownload(url, outputPath string) error {
 
 	if insecure {
 		cfg.Insecure = true
+	}
+
+	if noNetrc {
+		cfg.NoNetrc = true
 	}
 
 	cfg.Quiet = quiet
@@ -475,7 +483,43 @@ func (c *rpcClient) call(method string, params []interface{}) (json.RawMessage, 
 	return rpcResp.Result, nil
 }
 
+// daemonize 以守护进程方式重新启动自身。
+// Windows 不支持真正的守护进程，提示用户使用 Start-Process 或服务。
+// Unix 上通过重新执行自身并分离标准输入/输出实现；不设置 Setsid 以避免引入 syscall 依赖，
+// 推荐配合 nohup 或 systemd 使用。
+func daemonize() error {
+	if runtime.GOOS == "windows" {
+		fmt.Fprintln(os.Stderr, "Daemon mode is not supported on Windows. Use 'Start-Process' or install as a service.")
+		return nil
+	}
+
+	// 已经是守护进程子进程，正常继续执行
+	if os.Getenv("AFD_DAEMONIZED") == "1" {
+		return nil
+	}
+
+	cmd := exec.Command(os.Args[0], os.Args[1:]...)
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	cmd.Env = append(os.Environ(), "AFD_DAEMONIZED=1")
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	fmt.Println("Daemon started with PID:", cmd.Process.Pid)
+	os.Exit(0)
+	return nil
+}
+
 func runServe() error {
+	if daemon {
+		if err := daemonize(); err != nil {
+			return fmt.Errorf("启动守护进程失败: %w", err)
+		}
+	}
+
 	printBanner()
 
 	cfg, err := config.Load(cfgFile)
@@ -665,6 +709,9 @@ func init() {
 	downloadCmd.Flags().StringVarP(&dir, "dir", "d", "", "下载保存目录")
 	downloadCmd.Flags().BoolVar(&adaptive, "adaptive", false, "自适应线程数 (根据网络状况自动调整)")
 	downloadCmd.Flags().BoolVarP(&insecure, "insecure", "k", false, "跳过TLS证书验证")
+	downloadCmd.Flags().BoolVarP(&noNetrc, "no-netrc", "n", false, "禁用 netrc 凭证读取")
+
+	serveCmd.Flags().BoolVarP(&daemon, "daemon", "D", false, "以守护进程方式运行 (仅 Unix)")
 
 	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "安静模式 (仅输出错误日志)")
 }
