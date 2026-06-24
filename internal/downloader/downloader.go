@@ -152,6 +152,11 @@ func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downl
 		retryConfig.MaxRetries = cfg.RetryCount
 	}
 
+	saveInterval := 5 * time.Second
+	if cfg.AutoSaveInterval > 0 {
+		saveInterval = time.Duration(cfg.AutoSaveInterval) * time.Second
+	}
+
 	d := &Downloader{
 		cfg:            cfg,
 		retryConfig:    retryConfig,
@@ -161,7 +166,7 @@ func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downl
 		cookieJar:      jar,
 		speedWindow:    make([]speedSample, 20),
 		adaptive:       newAdaptiveController(cfg.MaxConnections, 1),
-		saveInterval:   5 * time.Second,
+		saveInterval:   saveInterval,
 		rateLimiter:    rateLimiter,
 		conditionalGet: cfg.ConditionalGet,
 	}
@@ -402,6 +407,10 @@ func (d *Downloader) FileSize() int64 {
 }
 
 func (d *Downloader) Download(ctx context.Context) error {
+	if d.cfg.DryRun {
+		d.logger.Infow("dry run, skipping download", "url", d.url)
+		return nil
+	}
 	d.startTime = time.Now()
 	d.swMu.Lock()
 	d.lastSaveTime = time.Now()
@@ -617,7 +626,15 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 
 	if existingSize < fileSize {
 		if d.cfg.PreallocateSpace {
-			if err := preallocateFile(file, fileSize, d.cfg.SparseFile); err != nil {
+			allocation := d.cfg.FileAllocation
+			if allocation == "" {
+				allocation = "trunc"
+			}
+			if d.cfg.SparseFile && allocation == "trunc" {
+				// 向后兼容：SparseFile 语义等同于 trunc（在大多数文件系统上创建稀疏文件）
+				allocation = "trunc"
+			}
+			if err := preallocateFile(file, fileSize, allocation); err != nil {
 				d.logger.Warnw("failed to preallocate space, falling back to truncate", "error", err)
 				if err := file.Truncate(fileSize); err != nil {
 					return fmt.Errorf("truncate output file: %w", err)
@@ -848,6 +865,8 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 		"duration", time.Since(d.startTime),
 	)
 
+	d.applyRemoteTime()
+
 	return nil
 }
 
@@ -877,7 +896,7 @@ func (d *Downloader) headRequest(ctx context.Context) (int64, bool, error) {
 	if err != nil {
 		return 0, false, fmt.Errorf("create head request: %w", err)
 	}
-	req.Header.Set("User-Agent", "AFD/0.3")
+	d.applyCustomHeaders(req)
 
 	// 条件下载：添加 If-Modified-Since / If-None-Match
 	if d.conditionalGet {
@@ -907,11 +926,12 @@ func (d *Downloader) headRequest(ctx context.Context) (int64, bool, error) {
 		return d.getSizeViaGet(ctx)
 	}
 
-	// 捕获 Last-Modified 和 ETag 用于下次条件下载
+	// 捕获 Last-Modified 用于 remote-time 和条件下载
+	if lm := resp.Header.Get("Last-Modified"); lm != "" {
+		d.lastModified = lm
+	}
+	// ETag 仅在条件下载时捕获
 	if d.conditionalGet {
-		if lm := resp.Header.Get("Last-Modified"); lm != "" {
-			d.lastModified = lm
-		}
 		if et := resp.Header.Get("ETag"); et != "" {
 			d.etag = et
 		}
@@ -935,6 +955,11 @@ func (d *Downloader) getSizeViaGet(ctx context.Context) (int64, bool, error) {
 		return 0, false, fmt.Errorf("get request failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// 捕获 Last-Modified 用于 remote-time
+	if lm := resp.Header.Get("Last-Modified"); lm != "" {
+		d.lastModified = lm
+	}
 
 	if resp.StatusCode == http.StatusPartialContent {
 		contentRange := resp.Header.Get("Content-Range")
@@ -1354,6 +1379,38 @@ func (d *Downloader) downloadRangeOnceFromURL(ctx context.Context, file *os.File
 	}
 }
 
+// applyCustomHeaders 应用自定义 HTTP 头、Referer、HTTP 认证和 gzip 设置
+func (d *Downloader) applyCustomHeaders(req *http.Request) {
+	if d.cfg.UserAgent != "" {
+		req.Header.Set("User-Agent", d.cfg.UserAgent)
+	} else {
+		req.Header.Set("User-Agent", "AFD/0.3")
+	}
+	if d.cfg.Referer != "" {
+		req.Header.Set("Referer", d.cfg.Referer)
+	}
+	for k, v := range d.cfg.CustomHeaders {
+		req.Header.Set(k, v)
+	}
+	if d.cfg.HTTPUsername != "" {
+		req.SetBasicAuth(d.cfg.HTTPUsername, d.cfg.HTTPPassword)
+	}
+	if d.cfg.AcceptGzip {
+		req.Header.Set("Accept-Encoding", "gzip")
+	}
+}
+
+// applyRemoteTime 如果启用 remote-time，根据 HTTP 响应的 Last-Modified 设置本地文件时间
+func (d *Downloader) applyRemoteTime() {
+	if d.cfg.RemoteTime && d.lastModified != "" {
+		if t, err := http.ParseTime(d.lastModified); err == nil {
+			if err := os.Chtimes(d.outputPath, t, t); err != nil {
+				d.logger.Warnw("failed to set file time from remote", "error", err)
+			}
+		}
+	}
+}
+
 // newGetRequest 创建 GET 请求，保留原始 URL 路径字符不被二次编码
 func (d *Downloader) newGetRequest(ctx context.Context, rawURL string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
@@ -1364,7 +1421,7 @@ func (d *Downloader) newGetRequest(ctx context.Context, rawURL string) (*http.Re
 	if req.URL != nil {
 		req.URL.RawPath = ""
 	}
-	req.Header.Set("User-Agent", "AFD/0.3")
+	d.applyCustomHeaders(req)
 	return req, nil
 }
 
@@ -1556,6 +1613,8 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 		d.logger.Warnw("failed to save cookies", "error", saveErr)
 	}
 
+	d.applyRemoteTime()
+
 	return nil
 }
 
@@ -1674,6 +1733,8 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 	if saveErr := d.saveCookies(); saveErr != nil {
 		d.logger.Warnw("failed to save cookies", "error", saveErr)
 	}
+
+	d.applyRemoteTime()
 
 	return nil
 }
@@ -1815,7 +1876,7 @@ func (d *Downloader) SetInsecure(insecure bool) {
 	}
 }
 
-func preallocateFile(file *os.File, size int64, sparse bool) error {
+func preallocateFile(file *os.File, size int64, allocation string) error {
 	stat, err := file.Stat()
 	if err != nil {
 		return err
@@ -1824,19 +1885,21 @@ func preallocateFile(file *os.File, size int64, sparse bool) error {
 		return nil
 	}
 
-	if sparse {
-		if err := file.Truncate(size); err != nil {
-			return err
-		}
+	switch allocation {
+	case "none":
 		return nil
+	case "falloc":
+		// 尝试 syscall.Fallocate（Linux），失败则回退到 trunc
+		if err := syscallFallocate(file, size); err == nil {
+			return nil
+		}
+		return file.Truncate(size)
+	case "trunc", "":
+		return file.Truncate(size)
+	case "prealloc":
+		// 简化：prealloc 等同于 trunc
+		return file.Truncate(size)
+	default:
+		return file.Truncate(size)
 	}
-
-	if _, err := file.Seek(size-1, 0); err != nil {
-		return err
-	}
-	if _, err := file.Write([]byte{0}); err != nil {
-		return err
-	}
-
-	return file.Truncate(size)
 }

@@ -156,11 +156,19 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 			if m.eventEmitter != nil {
 				m.eventEmitter.EmitTaskFailed(t.ID, map[string]interface{}{"error": err.Error()})
 			}
+			if m.hub != nil {
+				m.hub.BroadcastNotification("aria2.onDownloadError", t.ID)
+			}
 			m.taskQueue.FailTask(t.ID, err.Error())
 			return
 		}
 
 		t.SetContext(ctx)
+
+		// 推送 aria2 兼容的下载开始通知
+		if m.hub != nil {
+			m.hub.BroadcastNotification("aria2.onDownloadStart", t.ID)
+		}
 
 		// 启动进度监控 goroutine
 		progressCtx, progressCancel := context.WithCancel(ctx)
@@ -178,33 +186,48 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 				if m.eventEmitter != nil {
 					m.eventEmitter.EmitTaskPaused(t.ID, map[string]interface{}{"reason": "cancelled"})
 				}
+				if m.hub != nil {
+					m.hub.BroadcastNotification("aria2.onDownloadStop", t.ID)
+				}
 				return
 			}
 			t.SetError(err.Error())
 			if m.eventEmitter != nil {
 				m.eventEmitter.EmitTaskFailed(t.ID, map[string]interface{}{"error": err.Error()})
 			}
+			if m.hub != nil {
+				m.hub.BroadcastNotification("aria2.onDownloadError", t.ID)
+			}
 			m.taskQueue.FailTask(t.ID, err.Error())
 			return
 		}
 
-		valid, err := t.VerifyDownload()
-		if err != nil {
-			t.SetError(fmt.Sprintf("checksum verification failed: %v", err))
-			if m.eventEmitter != nil {
-				m.eventEmitter.EmitTaskFailed(t.ID, map[string]interface{}{"error": err.Error()})
+		// 校验完整性（仅在启用 CheckIntegrity 时执行）
+		if m.downloadCfg.CheckIntegrity {
+			valid, err := t.VerifyDownload()
+			if err != nil {
+				t.SetError(fmt.Sprintf("checksum verification failed: %v", err))
+				if m.eventEmitter != nil {
+					m.eventEmitter.EmitTaskFailed(t.ID, map[string]interface{}{"error": err.Error()})
+				}
+				if m.hub != nil {
+					m.hub.BroadcastNotification("aria2.onDownloadError", t.ID)
+				}
+				m.taskQueue.FailTask(t.ID, fmt.Sprintf("checksum verification failed: %v", err))
+				return
 			}
-			m.taskQueue.FailTask(t.ID, fmt.Sprintf("checksum verification failed: %v", err))
-			return
-		}
 
-		if !valid {
-			t.SetError("checksum mismatch")
-			if m.eventEmitter != nil {
-				m.eventEmitter.EmitTaskFailed(t.ID, map[string]interface{}{"error": "checksum mismatch"})
+			if !valid {
+				t.SetError("checksum mismatch")
+				if m.eventEmitter != nil {
+					m.eventEmitter.EmitTaskFailed(t.ID, map[string]interface{}{"error": "checksum mismatch"})
+				}
+				if m.hub != nil {
+					m.hub.BroadcastNotification("aria2.onDownloadError", t.ID)
+				}
+				m.taskQueue.FailTask(t.ID, "checksum mismatch")
+				return
 			}
-			m.taskQueue.FailTask(t.ID, "checksum mismatch")
-			return
 		}
 
 		// 后处理
@@ -235,6 +258,15 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 			})
 		}
 
+		// 推送 aria2 兼容的下载完成通知（BT 下载使用 onBtDownloadComplete）
+		if m.hub != nil {
+			if IsMagnetLink(t.URL) || IsTorrentFile(t.URL) {
+				m.hub.BroadcastNotification("aria2.onBtDownloadComplete", t.ID)
+			} else {
+				m.hub.BroadcastNotification("aria2.onDownloadComplete", t.ID)
+			}
+		}
+
 		m.taskQueue.CompleteTask(t.ID)
 	}()
 }
@@ -258,6 +290,10 @@ func (m *DownloadManager) PauseDownload(taskID string) error {
 	m.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("task %s not active", taskID)
+	}
+	// 推送 aria2 兼容的下载暂停通知
+	if m.hub != nil {
+		m.hub.BroadcastNotification("aria2.onDownloadPause", taskID)
 	}
 	dl.cancel()
 	// 等待下载 goroutine 退出

@@ -243,7 +243,7 @@ func (s *JSONRPCServer) handleMethod(method string, params []interface{}) (inter
 	case "system.listMethods":
 		return s.listMethods()
 	case "system.listNotifications":
-		return []string{}, nil
+		return s.listNotifications()
 	default:
 		return nil, newJSONRPCError(-32601, fmt.Errorf("Method not found: %s", method))
 	}

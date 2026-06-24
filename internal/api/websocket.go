@@ -183,6 +183,20 @@ func (h *WebSocketHub) BroadcastTaskUpdate(t *task.Task) {
 	h.tryBroadcast(data)
 }
 
+// BroadcastNotification 向所有连接的 WebSocket 客户端推送 aria2 兼容的
+// JSON-RPC 通知事件（如 onDownloadStart / onDownloadComplete 等）。
+func (h *WebSocketHub) BroadcastNotification(method string, gid string) {
+	notification := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  method,
+		"params":  []interface{}{map[string]string{"gid": gid}},
+	}
+	data := mustMarshal(notification)
+	if data != nil {
+		h.tryBroadcast(data)
+	}
+}
+
 func (h *WebSocketHub) BroadcastNodeUpdate() {
 	h.mu.RLock()
 	membership := h.membership

@@ -131,6 +131,7 @@ var (
 	dir        string
 	adaptive   bool
 	insecure   bool
+	quiet      bool
 )
 
 var downloadCmd = &cobra.Command{
@@ -237,7 +238,13 @@ func doDownload(url, outputPath string) error {
 		cfg.Insecure = true
 	}
 
-	logger.Init("info", "")
+	cfg.Quiet = quiet
+
+	logLevel := "info"
+	if quiet {
+		logLevel = "error"
+	}
+	logger.Init(logLevel, "")
 	defer logger.Log.Sync()
 
 	log := logger.Log.Named("download")
@@ -476,6 +483,9 @@ func runServe() error {
 		return fmt.Errorf("加载配置失败: %w", err)
 	}
 
+	if quiet {
+		cfg.Node.LogLevel = "error"
+	}
 	if err := logger.Init(cfg.Node.LogLevel, ""); err != nil {
 		return fmt.Errorf("初始化日志失败: %w", err)
 	}
@@ -506,9 +516,7 @@ func runServe() error {
 		if logger.Log != nil {
 			logger.Log.Infow("收到信号，正在关闭", "signal", sig)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
+		_ = srv.Stop()
 	}()
 
 	logger.Log.Infow("启动 API 服务器", "addr", srv.Addr)
@@ -516,7 +524,7 @@ func runServe() error {
 	fmt.Printf("XML-RPC 地址: http://%s/xmlrpc\n", srv.Addr)
 	fmt.Println(strings.Repeat("=", 50))
 
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := srv.Start(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("服务器错误: %w", err)
 	}
 
@@ -657,6 +665,8 @@ func init() {
 	downloadCmd.Flags().StringVarP(&dir, "dir", "d", "", "下载保存目录")
 	downloadCmd.Flags().BoolVar(&adaptive, "adaptive", false, "自适应线程数 (根据网络状况自动调整)")
 	downloadCmd.Flags().BoolVarP(&insecure, "insecure", "k", false, "跳过TLS证书验证")
+
+	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "安静模式 (仅输出错误日志)")
 }
 
 func main() {

@@ -123,6 +123,20 @@ type DownloadConfig struct {
 	Adaptive            bool                 `json:"adaptive" yaml:"adaptive"`
 	Insecure            bool                 `json:"insecure" yaml:"insecure"`
 	ConditionalGet      bool                 `json:"conditional_get" yaml:"conditional_get"`
+
+	// HTTP 选项
+	UserAgent        string            `json:"user_agent" yaml:"user_agent"`
+	Referer          string            `json:"referer" yaml:"referer"`
+	CustomHeaders    map[string]string `json:"custom_headers" yaml:"custom_headers"`
+	HTTPUsername     string            `json:"http_username" yaml:"http_username"`
+	HTTPPassword     string            `json:"http_password" yaml:"http_password"`
+	AcceptGzip       bool              `json:"accept_gzip" yaml:"accept_gzip"`
+	DryRun           bool              `json:"dry_run" yaml:"dry_run"`
+	RemoteTime       bool              `json:"remote_time" yaml:"remote_time"`
+	Quiet            bool              `json:"quiet" yaml:"quiet"`
+	CheckIntegrity   bool              `json:"check_integrity" yaml:"check_integrity"`
+	AutoSaveInterval int               `json:"auto_save_interval" yaml:"auto_save_interval"` // 秒，0=禁用
+	FileAllocation   string            `json:"file_allocation" yaml:"file_allocation"`       // none/prealloc/falloc/trunc
 }
 
 func (c *DownloadConfig) Validate() error {
@@ -243,10 +257,11 @@ func (c *NATConfig) Validate() error {
 }
 
 type Config struct {
-	Node     NodeConfig     `json:"node" yaml:"node"`
-	API      APIConfig      `json:"api" yaml:"api"`
-	Cluster  ClusterConfig  `json:"cluster" yaml:"cluster"`
-	Download DownloadConfig `json:"download" yaml:"download"`
+	Node             NodeConfig     `json:"node" yaml:"node"`
+	API              APIConfig      `json:"api" yaml:"api"`
+	Cluster          ClusterConfig  `json:"cluster" yaml:"cluster"`
+	Download         DownloadConfig `json:"download" yaml:"download"`
+	AutoSaveInterval int            `json:"auto_save_interval,omitempty" yaml:"auto_save_interval,omitempty"`
 }
 
 func (c *Config) Validate() error {
@@ -319,6 +334,10 @@ func DefaultDownloadConfig() *DownloadConfig {
 		Adaptive:            false,
 		Insecure:            false,
 		ConditionalGet:      false,
+		UserAgent:           "AFD/0.3",
+		FileAllocation:      "trunc",
+		AutoSaveInterval:    60,
+		CheckIntegrity:      false,
 	}
 }
 
@@ -509,6 +528,13 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.Download.SpeedLimit = limit
 		} else {
 			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_DOWNLOAD_SPEED_LIMIT: %s\n", v)
+		}
+	}
+	if v := os.Getenv("NEXUS_AUTO_SAVE_INTERVAL"); v != "" {
+		if interval, err := strconv.Atoi(v); err == nil {
+			cfg.AutoSaveInterval = interval
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_AUTO_SAVE_INTERVAL: %s\n", v)
 		}
 	}
 }

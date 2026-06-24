@@ -53,7 +53,7 @@ func TestPreallocateFile(t *testing.T) {
 	}
 	defer file.Close()
 
-	err = preallocateFile(file, 1024*1024, false)
+	err = preallocateFile(file, 1024*1024, "trunc")
 	if err != nil {
 		t.Fatalf("preallocateFile failed: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestPreallocateFileSparse(t *testing.T) {
 	}
 	defer file.Close()
 
-	err = preallocateFile(file, 10*1024*1024, true)
+	err = preallocateFile(file, 10*1024*1024, "trunc")
 	if err != nil {
 		t.Fatalf("preallocateFile sparse failed: %v", err)
 	}

@@ -31,6 +31,8 @@ type Server struct {
 	startedAt     time.Time
 	version       string
 	rateLimitStop func()
+	stopCh        chan struct{}
+	stopOnce      sync.Once
 }
 
 func (s *Server) Handler() http.Handler {
@@ -164,6 +166,7 @@ func NewServer(cfg *config.Config, taskQueue *task.TaskQueue, taskStore *task.Ta
 		hub:        hub,
 		startedAt:  time.Now(),
 		version:    ver,
+		stopCh:     make(chan struct{}),
 	}
 
 	// WebSocket endpoint - no middleware needed
@@ -521,15 +524,52 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	s.hub.ServeWS(w, r)
 }
 
+// saveSession 将所有任务持久化到 taskStore，用于会话保存和自动保存。
+func (s *Server) saveSession() {
+	if s.taskStore == nil || s.taskQueue == nil {
+		return
+	}
+	tasks := s.taskQueue.List()
+	for _, t := range tasks {
+		if err := s.taskStore.Save(t); err != nil {
+			logger.Log.Warnw("saveSession persist failed", "gid", t.ID, "err", err)
+		}
+	}
+}
+
 func (s *Server) Start() error {
 	logger.Log.Infow("Starting API server",
 		"addr", s.Addr,
 	)
+
+	// 启动定时自动保存会话
+	if s.config != nil && s.config.AutoSaveInterval > 0 {
+		go s.autoSaveLoop(s.config.AutoSaveInterval)
+	}
+
 	return s.ListenAndServe()
+}
+
+// autoSaveLoop 定期保存会话，直到 stopCh 关闭。
+func (s *Server) autoSaveLoop(intervalSec int) {
+	interval := time.Duration(intervalSec) * time.Second
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.saveSession()
+		case <-s.stopCh:
+			return
+		}
+	}
 }
 
 func (s *Server) Stop() error {
 	logger.Log.Info("Stopping API server")
+	s.stopOnce.Do(func() {
+		close(s.stopCh)
+	})
 	if s.rateLimitStop != nil {
 		s.rateLimitStop()
 		s.rateLimitStop = nil
