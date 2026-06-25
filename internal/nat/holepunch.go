@@ -71,7 +71,7 @@ func (h *HolePuncher) handleMessages() {
 		default:
 		}
 
-		h.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+		h.conn.SetReadDeadline(time.Now().Add(defaultReadTimeout))
 		n, addr, err := h.conn.ReadFromUDP(buf)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -209,8 +209,6 @@ func (h *HolePuncher) PunchWithSync(peerAddr string, localPublicIP string, local
 	if err != nil {
 		return err
 	}
-
-	_ = h.conn.LocalAddr().(*net.UDPAddr)
 
 	msg := HolePunchMessage{
 		Type:      HolePunchSync,

@@ -364,6 +364,14 @@ func (c *WSClient) handleMessage(msg WSMessage) {
 	}
 }
 
+// ctx 返回 WebSocket 读/写操作的父 context。
+//
+// 这里刻意返回 context.Background() 而非带超时的 context：所有调用方
+// （readPump / writePump）在调用 conn.Read / conn.Write 之前都会通过
+// context.WithTimeout 包一层短期超时（10s / 60s），因此 Background
+// 仅作为父 context，不会导致无限期阻塞。若在此处再叠加 WithTimeout，
+// 反而会与调用方的超时叠加产生不可预期的截止时间，并需要额外管理
+// cancel 生命周期（cancel 不能立即调用，否则会取消整个 context）。
 func (c *WSClient) ctx() context.Context {
 	return context.Background()
 }

@@ -8,6 +8,8 @@ linters:
     - govet          # go vet
     - ineffassign    # unused assignments
     - typecheck      # type errors
+    - gofmt          # gofmt 格式检查
+    - goimports      # import 顺序与分组检查
 
 linters-settings: {}
 

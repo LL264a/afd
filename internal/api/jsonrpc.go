@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -357,6 +356,9 @@ func (s *JSONRPCServer) addUri(params []interface{}) (interface{}, error) {
 	}
 	options := paramMap(params, 1)
 	position := paramString(params, 2)
+	// TaskQueue.Add does not support positional insertion; position is
+	// accepted for aria2 API compatibility but currently ignored.
+	_ = position
 
 	gids := make([]string, 0, len(uris))
 	for _, uri := range uris {
@@ -370,7 +372,6 @@ func (s *JSONRPCServer) addUri(params []interface{}) (interface{}, error) {
 		}
 		s.persistTask(t)
 		gids = append(gids, t.ID)
-		_ = position
 	}
 	return gids, nil
 }
@@ -385,7 +386,6 @@ func (s *JSONRPCServer) addTorrent(params []interface{}) (interface{}, error) {
 		return nil, newJSONRPCError(-1, fmt.Errorf("Invalid torrent parameter"))
 	}
 	options := paramMap(params, 1)
-	_ = options
 
 	if torrentB64 == "" {
 		return nil, newJSONRPCError(-1, fmt.Errorf("Empty torrent"))
@@ -453,7 +453,9 @@ func (s *JSONRPCServer) pauseAll(_ []interface{}) (interface{}, error) {
 	tasks := s.taskQueue.List()
 	for _, t := range tasks {
 		if t.GetStatus() == task.StatusDownloading {
-			_ = s.taskQueue.Pause(t.ID)
+			if err := s.taskQueue.Pause(t.ID); err != nil {
+				s.logger.Warnw("failed to pause task", "id", t.ID, "error", err)
+			}
 		}
 	}
 	return "OK", nil
@@ -474,7 +476,9 @@ func (s *JSONRPCServer) unpauseAll(_ []interface{}) (interface{}, error) {
 	tasks := s.taskQueue.List()
 	for _, t := range tasks {
 		if t.GetStatus() == task.StatusPaused {
-			_ = s.taskQueue.Resume(t.ID)
+			if err := s.taskQueue.Resume(t.ID); err != nil {
+				s.logger.Warnw("failed to resume task", "id", t.ID, "error", err)
+			}
 		}
 	}
 	return "OK", nil
@@ -597,8 +601,7 @@ func (s *JSONRPCServer) getPeers(_ []interface{}) (interface{}, error) {
 	return []map[string]interface{}{}, nil
 }
 
-func (s *JSONRPCServer) getServers(params []interface{}) (interface{}, error) {
-	_ = paramString(params, 0)
+func (s *JSONRPCServer) getServers(_ []interface{}) (interface{}, error) {
 	return []map[string]string{}, nil
 }
 
@@ -818,8 +821,7 @@ func (s *JSONRPCServer) shutdown() (interface{}, error) {
 	go func() {
 		time.Sleep(100 * time.Millisecond)
 		if err := requestGracefulShutdown(); err != nil {
-			s.logger.Warnw("Graceful shutdown request failed; forcing exit", "err", err)
-			os.Exit(1)
+			s.logger.Errorw("Graceful shutdown request failed; relying on signal handler to drive exit", "err", err)
 		}
 	}()
 	return "OK", nil

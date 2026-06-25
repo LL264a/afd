@@ -164,6 +164,13 @@ func DoWithRetry(ctx context.Context, config RetryConfig, fn func() error) error
 	var lastErr error
 	interval := config.InitialInterval
 
+	// 使用 NewTimer 替代 time.After，避免重试循环中累积未触发的定时器。
+	backoffTimer := time.NewTimer(0)
+	defer backoffTimer.Stop()
+	if !backoffTimer.Stop() {
+		<-backoffTimer.C
+	}
+
 	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
 		select {
 		case <-ctx.Done():
@@ -189,10 +196,11 @@ func DoWithRetry(ctx context.Context, config RetryConfig, fn func() error) error
 			backoff = config.MaxInterval
 		}
 
+		backoffTimer.Reset(backoff)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(backoff):
+		case <-backoffTimer.C:
 		}
 
 		interval = backoff
@@ -208,6 +216,13 @@ func DoWithRetryWithLogger(ctx context.Context, config RetryConfig, logger *zap.
 
 	var lastErr error
 	interval := config.InitialInterval
+
+	// 使用 NewTimer 替代 time.After，避免重试循环中累积未触发的定时器。
+	backoffTimer := time.NewTimer(0)
+	defer backoffTimer.Stop()
+	if !backoffTimer.Stop() {
+		<-backoffTimer.C
+	}
 
 	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
 		select {
@@ -245,10 +260,11 @@ func DoWithRetryWithLogger(ctx context.Context, config RetryConfig, logger *zap.
 			"error", lastErr,
 		)
 
+		backoffTimer.Reset(backoff)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(backoff):
+		case <-backoffTimer.C:
 		}
 
 		interval = backoff

@@ -155,7 +155,7 @@ func NewProxyAuthTransport(transport http.RoundTripper, username, password strin
 	}
 }
 
-func CreateHTTPProxyClient(proxyCfg *config.ProxyConfig, timeout time.Duration, useDigest bool, excludeList []string) (*http.Client, error) {
+func NewHTTPProxyClient(proxyCfg *config.ProxyConfig, timeout time.Duration, useDigest bool, excludeList []string) (*http.Client, error) {
 	if !proxyCfg.IsValid() {
 		return nil, fmt.Errorf("invalid proxy config")
 	}
@@ -316,7 +316,7 @@ func CreateProxyClient(proxyCfg *config.ProxyConfig, timeout time.Duration, useD
 
 	switch proxyCfg.Type {
 	case "http", "https":
-		return CreateHTTPProxyClient(proxyCfg, timeout, useDigest, excludeList)
+		return NewHTTPProxyClient(proxyCfg, timeout, useDigest, excludeList)
 	case "socks5":
 		return CreateSOCKS5ProxyClient(proxyCfg, timeout)
 	case "socks4":

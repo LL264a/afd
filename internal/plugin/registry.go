@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"plugin"
 	"sync"
+	"time"
 
 	"github.com/nexus-dl/afd/pkg/logger"
 )
@@ -69,7 +70,10 @@ func (r *Registry) LoadFromFile(path string) (Plugin, error) {
 		return nil, fmt.Errorf("plugin does not implement Plugin interface")
 	}
 
-	if err := p.Init(context.Background()); err != nil {
+	// 为插件初始化添加超时，避免恶意或异常插件在 Init 中无限阻塞。
+	initCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := p.Init(initCtx); err != nil {
 		return nil, fmt.Errorf("failed to initialize plugin: %w", err)
 	}
 
@@ -151,7 +155,10 @@ func (r *Registry) LoadBuiltin(name string) (Plugin, error) {
 	}
 
 	plugin := factory()
-	if err := plugin.Init(context.Background()); err != nil {
+	// 为插件初始化添加超时，避免恶意或异常插件在 Init 中无限阻塞。
+	initCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := plugin.Init(initCtx); err != nil {
 		return nil, fmt.Errorf("failed to initialize plugin: %w", err)
 	}
 

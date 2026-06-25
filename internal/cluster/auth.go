@@ -22,12 +22,12 @@ import (
 
 const NodeIDLength = 16
 
-func GenerateNodeID() string {
+func GenerateNodeID() (string, error) {
 	b := make([]byte, NodeIDLength)
 	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("failed to generate node ID: %v", err))
+		return "", fmt.Errorf("failed to generate node ID: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 type ClusterAuth struct {

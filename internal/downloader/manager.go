@@ -51,6 +51,17 @@ func NewDownloadManager(taskQueue *task.TaskQueue, taskStore *task.TaskStore, hu
 	}
 }
 
+// failTask 统一处理下载失败时的事件发射、WebSocket 通知和任务队列状态更新
+func (m *DownloadManager) failTask(taskID string, errMsg string) {
+	if m.eventEmitter != nil {
+		m.eventEmitter.EmitTaskFailed(taskID, map[string]interface{}{"error": errMsg})
+	}
+	if m.hub != nil {
+		m.hub.BroadcastNotification("aria2.onDownloadError", taskID)
+	}
+	m.taskQueue.FailTask(taskID, errMsg)
+}
+
 func (m *DownloadManager) Start() {
 	logger.Log.Info("Download manager started")
 
@@ -153,13 +164,7 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 		d, err := NewDownloaderFromURL(t.URL, outputPath, m.downloadCfg, logger.Log.Named("downloader"))
 		if err != nil {
 			t.SetError(fmt.Sprintf("failed to create downloader: %v", err))
-			if m.eventEmitter != nil {
-				m.eventEmitter.EmitTaskFailed(t.ID, map[string]interface{}{"error": err.Error()})
-			}
-			if m.hub != nil {
-				m.hub.BroadcastNotification("aria2.onDownloadError", t.ID)
-			}
-			m.taskQueue.FailTask(t.ID, err.Error())
+			m.failTask(t.ID, err.Error())
 			return
 		}
 
@@ -192,13 +197,7 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 				return
 			}
 			t.SetError(err.Error())
-			if m.eventEmitter != nil {
-				m.eventEmitter.EmitTaskFailed(t.ID, map[string]interface{}{"error": err.Error()})
-			}
-			if m.hub != nil {
-				m.hub.BroadcastNotification("aria2.onDownloadError", t.ID)
-			}
-			m.taskQueue.FailTask(t.ID, err.Error())
+			m.failTask(t.ID, err.Error())
 			return
 		}
 
@@ -219,13 +218,7 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 
 			if !valid {
 				t.SetError("checksum mismatch")
-				if m.eventEmitter != nil {
-					m.eventEmitter.EmitTaskFailed(t.ID, map[string]interface{}{"error": "checksum mismatch"})
-				}
-				if m.hub != nil {
-					m.hub.BroadcastNotification("aria2.onDownloadError", t.ID)
-				}
-				m.taskQueue.FailTask(t.ID, "checksum mismatch")
+				m.failTask(t.ID, "checksum mismatch")
 				return
 			}
 		}

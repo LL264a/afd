@@ -383,6 +383,13 @@ func (d *Downloader) SaveProgress() error {
 	return nil
 }
 
+// saveProgressOrLog 调用 SaveProgress 并在失败时记录日志，消除重复的错误处理样板代码
+func (d *Downloader) saveProgressOrLog() {
+	if err := d.SaveProgress(); err != nil {
+		d.logger.Errorw("failed to save progress", "error", err)
+	}
+}
+
 // recordSpeedAndCheckSave 在单次锁内完成速度采样和保存进度判断，避免热路径双重锁
 func (d *Downloader) recordSpeedAndCheckSave(bytes int64) bool {
 	d.swMu.Lock()
@@ -479,9 +486,7 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 					d.controlFile.Status = "completed"
 				}
 				d.cfMu.Unlock()
-				if err := d.SaveProgress(); err != nil {
-					d.logger.Errorw("failed to save progress", "error", err)
-				}
+				d.saveProgressOrLog()
 				return nil
 			}
 			// 本地文件不存在但服务器返回 304，清除条件头重新探测
@@ -525,9 +530,7 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 				d.cfMu.Lock()
 				d.controlFile.Status = "completed"
 				d.cfMu.Unlock()
-				if err := d.SaveProgress(); err != nil {
-					d.logger.Errorw("failed to save progress", "error", err)
-				}
+				d.saveProgressOrLog()
 				return nil
 			}
 			// controlFile 说下完了但文件不对，重置进度
@@ -693,12 +696,19 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 
 			cuid := pm.NextCUID()
 
+			// 使用 NewTimer 替代 time.After，避免在 for-select 长循环中
+			// 累积未触发的定时器导致内存泄漏。每次复用前 Stop+Reset。
+			throttleTimer := time.NewTimer(500 * time.Millisecond)
+			defer throttleTimer.Stop()
+			// 初始定时器不需要立即触发，先排空使其进入待 Reset 状态。
+			if !throttleTimer.Stop() {
+				<-throttleTimer.C
+			}
+
 			for {
 				select {
 				case <-workerCtx.Done():
-					if err := d.SaveProgress(); err != nil {
-						d.logger.Errorw("failed to save progress", "error", err)
-					}
+					d.saveProgressOrLog()
 					return
 				default:
 				}
@@ -718,29 +728,24 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 								currentActive := len(maxSem)
 								if currentActive > int(maxThreads) {
 									<-maxSem
+									throttleTimer.Reset(500 * time.Millisecond)
 									select {
 									case <-workerCtx.Done():
-										if err := d.SaveProgress(); err != nil {
-											d.logger.Errorw("failed to save progress", "error", err)
-										}
+										d.saveProgressOrLog()
 										return
-									case <-time.After(500 * time.Millisecond):
+									case <-throttleTimer.C:
 									}
 									continue
 								}
 							case <-workerCtx.Done():
-								if err := d.SaveProgress(); err != nil {
-									d.logger.Errorw("failed to save progress", "error", err)
-								}
+								d.saveProgressOrLog()
 								return
 							}
 						} else {
 							select {
 							case adaptiveSem <- struct{}{}:
 							case <-workerCtx.Done():
-								if err := d.SaveProgress(); err != nil {
-									d.logger.Errorw("failed to save progress", "error", err)
-								}
+								d.saveProgressOrLog()
 								return
 							}
 						}
@@ -763,9 +768,7 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 								"end", stealEnd,
 								"error", err,
 							)
-							if err := d.SaveProgress(); err != nil {
-								d.logger.Errorw("failed to save progress", "error", err)
-							}
+							d.saveProgressOrLog()
 							return
 						}
 						continue
@@ -786,22 +789,19 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 							// 把 piece 放回 idle
 							piece.SetStatus(PieceIdle)
 							piece.SetOwner(0)
+							throttleTimer.Reset(500 * time.Millisecond)
 							select {
 							case <-workerCtx.Done():
-								if err := d.SaveProgress(); err != nil {
-									d.logger.Errorw("failed to save progress", "error", err)
-								}
+								d.saveProgressOrLog()
 								return
-							case <-time.After(500 * time.Millisecond):
+							case <-throttleTimer.C:
 							}
 							continue
 						}
 					case <-workerCtx.Done():
 						piece.SetStatus(PieceIdle)
 						piece.SetOwner(0)
-						if err := d.SaveProgress(); err != nil {
-							d.logger.Errorw("failed to save progress", "error", err)
-						}
+						d.saveProgressOrLog()
 						return
 					}
 				} else {
@@ -810,9 +810,7 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 					case <-workerCtx.Done():
 						piece.SetStatus(PieceIdle)
 						piece.SetOwner(0)
-						if err := d.SaveProgress(); err != nil {
-							d.logger.Errorw("failed to save progress", "error", err)
-						}
+						d.saveProgressOrLog()
 						return
 					}
 				}
@@ -829,26 +827,24 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 				}
 
 				if err != nil {
-				errOnce.Do(func() {
-					downloadErr = err
-					workerCancel()
-				})
-				d.logger.Errorw("piece download failed",
-					"piece_index", piece.Index,
-					"start", piece.Start,
-					"length", piece.Length,
-					"error", err,
-				)
-				// 重置 piece 状态，允许后续重试
-				if d.pieceMgr != nil {
-					piece.SetStatus(PieceIdle)
-					piece.SetOwner(0)
+					errOnce.Do(func() {
+						downloadErr = err
+						workerCancel()
+					})
+					d.logger.Errorw("piece download failed",
+						"piece_index", piece.Index,
+						"start", piece.Start,
+						"length", piece.Length,
+						"error", err,
+					)
+					// 重置 piece 状态，允许后续重试
+					if d.pieceMgr != nil {
+						piece.SetStatus(PieceIdle)
+						piece.SetOwner(0)
+					}
+					d.saveProgressOrLog()
+					return
 				}
-				if err := d.SaveProgress(); err != nil {
-					d.logger.Errorw("failed to save progress", "error", err)
-				}
-				return
-			}
 			}
 		}()
 	}
@@ -856,24 +852,18 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 	wg.Wait()
 
 	if downloadErr != nil {
-		if err := d.SaveProgress(); err != nil {
-			d.logger.Errorw("failed to save progress", "error", err)
-		}
+		d.saveProgressOrLog()
 		return downloadErr
 	}
 
-	if err := d.SaveProgress(); err != nil {
-		d.logger.Errorw("failed to save progress", "error", err)
-	}
+	d.saveProgressOrLog()
 
 	d.cfMu.Lock()
 	if d.controlFile != nil {
 		d.controlFile.Status = "completed"
 	}
 	d.cfMu.Unlock()
-	if err := d.SaveProgress(); err != nil {
-		d.logger.Errorw("failed to save progress", "error", err)
-	}
+	d.saveProgressOrLog()
 
 	// 下载完成后删除控制文件（启用条件下载时保留，以便下次使用 Last-Modified/ETag）
 	if d.controlFilePath != "" && !d.conditionalGet {
@@ -901,16 +891,12 @@ func (d *Downloader) periodicSaveProgress(ctx context.Context, done chan struct{
 	for {
 		select {
 		case <-ctx.Done():
-			if err := d.SaveProgress(); err != nil {
-				d.logger.Errorw("failed to save progress", "error", err)
-			}
+			d.saveProgressOrLog()
 			return
 		case <-done:
 			return
 		case <-ticker.C:
-			if err := d.SaveProgress(); err != nil {
-				d.logger.Errorw("failed to save progress", "error", err)
-			}
+			d.saveProgressOrLog()
 		}
 	}
 }
@@ -1030,14 +1016,23 @@ func (d *Downloader) downloadPiece(ctx context.Context, file *os.File, piece *Pi
 		minSpeedTimeout = 30 * time.Second
 	}
 
+	// 使用 NewTimer 替代 time.After，避免重试循环中累积未触发的定时器。
+	backoffTimer := time.NewTimer(backoff)
+	defer backoffTimer.Stop()
+	// 初始不需要立即触发，排空使其进入待 Reset 状态。
+	if !backoffTimer.Stop() {
+		<-backoffTimer.C
+	}
+
 	var lastErr error
 	for _, downloadURL := range urls {
 		for retry := 0; retry <= d.retryConfig.MaxRetries; retry++ {
 			if retry > 0 {
+				backoffTimer.Reset(backoff)
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
-				case <-time.After(backoff):
+				case <-backoffTimer.C:
 				}
 				backoff = time.Duration(float64(backoff) * 1.5)
 				if backoff > maxBackoff {
@@ -1101,6 +1096,13 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 	}()
 
 	buf := make([]byte, d.cfg.BufferSize)
+	// 使用 NewTimer 替代 time.After，避免 block 等待循环中累积未触发的定时器。
+	blockWaitTimer := time.NewTimer(100 * time.Millisecond)
+	defer blockWaitTimer.Stop()
+	// 初始不需要立即触发，排空使其进入待 Reset 状态。
+	if !blockWaitTimer.Stop() {
+		<-blockWaitTimer.C
+	}
 	// 使用 block 级别下载
 	for {
 		select {
@@ -1124,10 +1126,11 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 				return nil
 			}
 			// 所有 block 都被占用但未完成，短暂等待后重试
+			blockWaitTimer.Reset(100 * time.Millisecond)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(100 * time.Millisecond):
+			case <-blockWaitTimer.C:
 			}
 			continue
 		}
@@ -1201,9 +1204,7 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 				totalBytes += written
 
 				if d.recordSpeedAndCheckSave(written) {
-					if err := d.SaveProgress(); err != nil {
-						d.logger.Errorw("failed to save progress", "error", err)
-					}
+					d.saveProgressOrLog()
 				}
 
 				currentOffset += written
@@ -1237,51 +1238,51 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 				}
 
 				// 当当前 block 下载完成时，标记完成并移到下一个 block
-			if remainingInBlock <= 0 {
-				piece.CompleteBlock(currentBlockIdx)
+				if remainingInBlock <= 0 {
+					piece.CompleteBlock(currentBlockIdx)
 
-				if piece.IsComplete() {
+					if piece.IsComplete() {
 						resp.Body.Close()
 						pm.CompletePiece(piece.Index)
 						return nil
 					}
 
 					// 获取下一个 block
-				nextOffset, nextLength := piece.NextUnusedBlock()
-				if nextOffset < 0 {
-					// 没有更多 block 可获取，但 piece 未完成（其他 goroutine 在下载剩余 block）
-					resp.Body.Close()
-					break // 跳出内层循环，外层循环检查 piece 是否完成
-				}
+					nextOffset, nextLength := piece.NextUnusedBlock()
+					if nextOffset < 0 {
+						// 没有更多 block 可获取，但 piece 未完成（其他 goroutine 在下载剩余 block）
+						resp.Body.Close()
+						break // 跳出内层循环，外层循环检查 piece 是否完成
+					}
 
-				// 如果下一个 block 的偏移量与当前写入位置不连续，不能继续用同一 HTTP 响应
-				// 否则数据会写错位置（P0 数据损坏）
-				if nextOffset != currentOffset {
-					resp.Body.Close()
-					break // 跳出内层循环，外层循环重新获取 block
-				}
+					// 如果下一个 block 的偏移量与当前写入位置不连续，不能继续用同一 HTTP 响应
+					// 否则数据会写错位置（P0 数据损坏）
+					if nextOffset != currentOffset {
+						resp.Body.Close()
+						break // 跳出内层循环，外层循环重新获取 block
+					}
 
-				currentBlockIdx = piece.BlockIndexForOffset(nextOffset)
-				remainingInBlock = nextLength
-				// 注意：我们继续读取同一 HTTP 响应的数据，写入下一个 block 的位置
-				// 因为 Range 请求可能返回超出当前 block 的数据（动态 endOffset）
+					currentBlockIdx = piece.BlockIndexForOffset(nextOffset)
+					remainingInBlock = nextLength
+					// 注意：我们继续读取同一 HTTP 响应的数据，写入下一个 block 的位置
+					// 因为 Range 请求可能返回超出当前 block 的数据（动态 endOffset）
 				}
 			}
 
 			if readErr != nil {
-			resp.Body.Close()
-			if readErr == io.EOF {
-				if remainingInBlock > 0 {
-					// block 未完整下载，不标记完成
-					return fmt.Errorf("short read: block %d incomplete, %d bytes remaining", currentBlockIdx, remainingInBlock)
+				resp.Body.Close()
+				if readErr == io.EOF {
+					if remainingInBlock > 0 {
+						// block 未完整下载，不标记完成
+						return fmt.Errorf("short read: block %d incomplete, %d bytes remaining", currentBlockIdx, remainingInBlock)
+					}
+					// EOF 时标记当前 block 完成（数据已写入文件）
+					piece.CompleteBlock(currentBlockIdx)
+					if piece.IsComplete() {
+						pm.CompletePiece(piece.Index)
+					}
+					return nil
 				}
-				// EOF 时标记当前 block 完成（数据已写入文件）
-				piece.CompleteBlock(currentBlockIdx)
-				if piece.IsComplete() {
-					pm.CompletePiece(piece.Index)
-				}
-				return nil
-			}
 				if ctx.Err() != nil {
 					piece.CancelBlock(currentBlockIdx)
 					return ctx.Err()
@@ -1308,14 +1309,23 @@ func (d *Downloader) downloadRange(ctx context.Context, file *os.File, start, en
 	backoff := time.Second
 	maxBackoff := 30 * time.Second
 
+	// 使用 NewTimer 替代 time.After，避免重试循环中累积未触发的定时器。
+	rangeBackoffTimer := time.NewTimer(backoff)
+	defer rangeBackoffTimer.Stop()
+	// 初始不需要立即触发，排空使其进入待 Reset 状态。
+	if !rangeBackoffTimer.Stop() {
+		<-rangeBackoffTimer.C
+	}
+
 	var lastErr error
 	for _, downloadURL := range urls {
 		for retry := 0; retry <= d.retryConfig.MaxRetries; retry++ {
 			if retry > 0 {
+				rangeBackoffTimer.Reset(backoff)
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
-				case <-time.After(backoff):
+				case <-rangeBackoffTimer.C:
 				}
 				backoff = time.Duration(float64(backoff) * 1.5)
 				if backoff > maxBackoff {
@@ -1418,9 +1428,7 @@ func (d *Downloader) downloadRangeOnceFromURL(ctx context.Context, file *os.File
 			totalBytes += written
 
 			if d.recordSpeedAndCheckSave(written) {
-				if err := d.SaveProgress(); err != nil {
-					d.logger.Errorw("failed to save progress", "error", err)
-				}
+				d.saveProgressOrLog()
 			}
 		}
 
@@ -1631,9 +1639,7 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			if err := d.SaveProgress(); err != nil {
-				d.logger.Errorw("failed to save progress", "error", err)
-			}
+			d.saveProgressOrLog()
 			return ctx.Err()
 		default:
 		}
@@ -1642,9 +1648,7 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 		if n > 0 {
 			if rl := d.getRateLimiter(); rl != nil {
 				if err := rl.Wait(ctx, int64(n)); err != nil {
-					if err := d.SaveProgress(); err != nil {
-						d.logger.Errorw("failed to save progress", "error", err)
-					}
+					d.saveProgressOrLog()
 					return err
 				}
 			}
@@ -1657,9 +1661,7 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 			atomic.AddInt64(&d.totalDownloaded, int64(n))
 
 			if d.recordSpeedAndCheckSave(int64(n)) {
-				if err := d.SaveProgress(); err != nil {
-					d.logger.Errorw("failed to save progress", "error", err)
-				}
+				d.saveProgressOrLog()
 			}
 		}
 
@@ -1667,16 +1669,12 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 			if readErr == io.EOF {
 				break
 			}
-			if err := d.SaveProgress(); err != nil {
-				d.logger.Errorw("failed to save progress", "error", err)
-			}
+			d.saveProgressOrLog()
 			return fmt.Errorf("read: %w", readErr)
 		}
 	}
 
-	if err := d.SaveProgress(); err != nil {
-		d.logger.Errorw("failed to save progress", "error", err)
-	}
+	d.saveProgressOrLog()
 
 	// 下载完成后删除控制文件（启用条件下载时保留，以便下次使用 Last-Modified/ETag）
 	if d.controlFilePath != "" && !d.conditionalGet {
@@ -1752,9 +1750,7 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 	for {
 		select {
 		case <-ctx.Done():
-			if err := d.SaveProgress(); err != nil {
-				d.logger.Errorw("failed to save progress", "error", err)
-			}
+			d.saveProgressOrLog()
 			return ctx.Err()
 		default:
 		}
@@ -1763,9 +1759,7 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 		if n > 0 {
 			if rl := d.getRateLimiter(); rl != nil {
 				if err := rl.Wait(ctx, int64(n)); err != nil {
-					if err := d.SaveProgress(); err != nil {
-						d.logger.Errorw("failed to save progress", "error", err)
-					}
+					d.saveProgressOrLog()
 					return err
 				}
 			}
@@ -1778,9 +1772,7 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 			atomic.AddInt64(&d.totalDownloaded, int64(n))
 
 			if d.recordSpeedAndCheckSave(int64(n)) {
-				if err := d.SaveProgress(); err != nil {
-					d.logger.Errorw("failed to save progress", "error", err)
-				}
+				d.saveProgressOrLog()
 			}
 		}
 
@@ -1788,16 +1780,12 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 			if readErr == io.EOF {
 				break
 			}
-			if err := d.SaveProgress(); err != nil {
-				d.logger.Errorw("failed to save progress", "error", err)
-			}
+			d.saveProgressOrLog()
 			return fmt.Errorf("read: %w", readErr)
 		}
 	}
 
-	if err := d.SaveProgress(); err != nil {
-		d.logger.Errorw("failed to save progress", "error", err)
-	}
+	d.saveProgressOrLog()
 
 	// 下载完成后删除控制文件（启用条件下载时保留，以便下次使用 Last-Modified/ETag）
 	if d.controlFilePath != "" && !d.conditionalGet {

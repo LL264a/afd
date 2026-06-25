@@ -39,7 +39,7 @@ type WebDAVDownloader struct {
 	controlFile     interface{}
 }
 
-func NewWebDAVDownloader(urlStr, outputPath string, cfg *config.DownloadConfig, log *zap.SugaredLogger) (*WebDAVDownloader, error) {
+func NewWebDAVDownloader(urlStr, outputPath string, cfg *config.DownloadConfig, logger *zap.SugaredLogger) (*WebDAVDownloader, error) {
 	if cfg == nil {
 		cfg = config.DefaultDownloadConfig()
 	}
@@ -66,7 +66,9 @@ func NewWebDAVDownloader(urlStr, outputPath string, cfg *config.DownloadConfig, 
 
 	if parsedURL != nil {
 		user = parsedURL.User.Username()
-		password, _ = parsedURL.User.Password()
+		if pw, ok := parsedURL.User.Password(); ok {
+			password = pw
+		}
 	}
 
 	return &WebDAVDownloader{
@@ -74,7 +76,7 @@ func NewWebDAVDownloader(urlStr, outputPath string, cfg *config.DownloadConfig, 
 		url:        urlStr,
 		outputPath: outputPath,
 		cfg:        cfg,
-		logger:     log,
+		logger:     logger,
 		host:       host,
 		path:       path,
 		user:       user,
@@ -133,7 +135,9 @@ func (d *WebDAVDownloader) SetURL(urlStr string) {
 	parsedURL, _ := url.Parse(urlStr)
 	if parsedURL != nil {
 		d.user = parsedURL.User.Username()
-		d.password, _ = parsedURL.User.Password()
+		if pw, ok := parsedURL.User.Password(); ok {
+			d.password = pw
+		}
 	}
 }
 
@@ -465,10 +469,16 @@ func (h *WebDAVProtocolHandler) GetFileInfo(urlStr string) (int64, error) {
 
 	if parsedURL != nil {
 		user = parsedURL.User.Username()
-		password, _ = parsedURL.User.Password()
+		if pw, ok := parsedURL.User.Password(); ok {
+			password = pw
+		}
 	}
 
-	return GetWebDAVFileSize(context.Background(), client, urlStr, user, password)
+	// GetFileInfo 没有 context 参数，这里为 PROPFIND 网络请求添加超时，
+	// 避免在异常 WebDAV 端点上长时间阻塞。
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return GetWebDAVFileSize(ctx, client, urlStr, user, password)
 }
 
 func NewWebDAVFileServer() *webdav.FileSystem {

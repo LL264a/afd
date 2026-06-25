@@ -82,7 +82,7 @@ func (s *SignalingServer) handleMessages() {
 		default:
 		}
 
-		s.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+		s.conn.SetReadDeadline(time.Now().Add(defaultReadTimeout))
 		n, clientAddr, err := s.conn.ReadFromUDP(buf)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -201,7 +201,7 @@ func (c *SignalingClient) handleMessages() {
 		default:
 		}
 
-		c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+		c.conn.SetReadDeadline(time.Now().Add(defaultReadTimeout))
 		n, _, err := c.conn.ReadFromUDP(buf)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {

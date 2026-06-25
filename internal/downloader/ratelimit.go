@@ -51,6 +51,14 @@ func (r *RateLimiter) Wait(ctx context.Context, n int64) error {
 		return nil
 	}
 
+	// 使用 NewTimer 替代 time.After，避免在 for-select 长循环中累积未触发的定时器。
+	// 初始创建一个已停止的定时器，每次循环前 Reset。
+	waitTimer := time.NewTimer(0)
+	defer waitTimer.Stop()
+	if !waitTimer.Stop() {
+		<-waitTimer.C
+	}
+
 	for {
 		r.mu.Lock()
 		r.refill()
@@ -65,10 +73,11 @@ func (r *RateLimiter) Wait(ctx context.Context, n int64) error {
 		waitTime := time.Duration(float64(needed) / float64(r.rate) * float64(time.Second))
 		r.mu.Unlock()
 
+		waitTimer.Reset(waitTime)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(waitTime):
+		case <-waitTimer.C:
 		}
 	}
 }

@@ -38,7 +38,7 @@ type S3Downloader struct {
 	controlFile     interface{}
 }
 
-func NewS3Downloader(url, outputPath string, cfg *config.DownloadConfig, log *zap.SugaredLogger) (*S3Downloader, error) {
+func NewS3Downloader(url, outputPath string, cfg *config.DownloadConfig, logger *zap.SugaredLogger) (*S3Downloader, error) {
 	if cfg == nil {
 		cfg = config.DefaultDownloadConfig()
 	}
@@ -62,7 +62,7 @@ func NewS3Downloader(url, outputPath string, cfg *config.DownloadConfig, log *za
 		url:            url,
 		outputPath:     outputPath,
 		cfg:            cfg,
-		logger:         log,
+		logger:         logger,
 		bucket:         bucket,
 		key:            key,
 		lastSpeedCheck: time.Now(),
@@ -88,7 +88,11 @@ func loadAWSConfig() (aws.Config, error) {
 		))
 	}
 
-	return awsconfig.LoadDefaultConfig(context.Background(), opts...)
+	// LoadDefaultConfig 可能触发 IMDS 元数据请求（网络调用），添加超时以避免
+	// 在无凭证环境或网络异常时长时间阻塞。
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return awsconfig.LoadDefaultConfig(ctx, opts...)
 }
 
 func ParseS3URL(url string) (bucket, key string, err error) {
@@ -393,7 +397,11 @@ func (h *S3ProtocolHandler) GetFileInfo(url string) (int64, error) {
 		Key:    aws.String(key),
 	}
 
-	headResult, err := client.HeadObject(context.Background(), headInput)
+	// GetFileInfo 没有 context 参数，这里为 HeadObject 网络请求添加超时，
+	// 避免在异常 S3 端点上长时间阻塞。
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	headResult, err := client.HeadObject(ctx, headInput)
 	if err != nil {
 		return 0, fmt.Errorf("head object: %w", err)
 	}

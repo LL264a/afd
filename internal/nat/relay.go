@@ -90,7 +90,7 @@ func (r *RelayServer) handleMessages() {
 		default:
 		}
 
-		r.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+		r.conn.SetReadDeadline(time.Now().Add(defaultReadTimeout))
 		n, clientAddr, err := r.conn.ReadFromUDP(buf)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -267,7 +267,7 @@ func (c *RelayClient) handleMessages() {
 		default:
 		}
 
-		c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+		c.conn.SetReadDeadline(time.Now().Add(defaultReadTimeout))
 		n, _, err := c.conn.ReadFromUDP(buf)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {

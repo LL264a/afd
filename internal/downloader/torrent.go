@@ -3,6 +3,7 @@ package downloader
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -243,10 +244,21 @@ func createTorrentClient(cfg *BTConfig) (*torrent.Client, error) {
 		clientCfg.CryptoSelector = mse.DefaultCryptoSelector
 	}
 
-	// WebSeed 支持：确保未禁用，并设置默认的 HTTP RoundTripper。
+	// WebSeed 支持：确保未禁用，并设置自定义 HTTP RoundTripper。
+	// 不使用 http.DefaultTransport 以避免全局共享状态，并为 WebSeed
+	// HTTP 请求设置合理的拨号、TLS 与连接超时。
 	clientCfg.DisableWebseeds = false
 	if clientCfg.WebTransport == nil {
-		clientCfg.WebTransport = http.DefaultTransport
+		clientCfg.WebTransport = &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
 	}
 
 	client, err := torrent.NewClient(clientCfg)
@@ -382,12 +394,20 @@ func (d *TorrentDownloader) Download(ctx context.Context) error {
 		d.torrent.DownloadAll()
 	}
 
-	// 使用循环检查进度直到完成
+	// 使用循环检查进度直到完成。
+	// 使用 NewTimer 替代 time.After，避免在 for-select 长循环中累积未触发的定时器。
+	progressTimer := time.NewTimer(1 * time.Second)
+	defer progressTimer.Stop()
+	// 初始不需要立即触发，排空使其进入待 Reset 状态。
+	if !progressTimer.Stop() {
+		<-progressTimer.C
+	}
 	for {
+		progressTimer.Reset(1 * time.Second)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(1 * time.Second):
+		case <-progressTimer.C:
 			info := d.torrent.Info()
 			if info != nil {
 				// 检查是否所有选择的文件都已完成

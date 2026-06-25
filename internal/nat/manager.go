@@ -11,6 +11,10 @@ import (
 	"github.com/nexus-dl/afd/pkg/logger"
 )
 
+// defaultReadTimeout 是 NAT 连接读取/接受操作的超时时间，
+// 用于在 select 循环中周期性地检查停止信号。
+const defaultReadTimeout = 1 * time.Second
+
 type ConnectionType int
 
 const (
@@ -145,7 +149,7 @@ func (nm *NATManager) acceptConnections() {
 		default:
 		}
 
-		nm.listener.SetDeadline(time.Now().Add(1 * time.Second))
+		nm.listener.SetDeadline(time.Now().Add(defaultReadTimeout))
 		conn, err := nm.listener.Accept()
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
