@@ -125,17 +125,19 @@ var statusCmd = &cobra.Command{
 }
 
 var (
-	parallel   int
-	output     string
-	speedLimit string
-	timeout    int
-	inputFile  string
-	dir        string
-	adaptive   bool
-	insecure   bool
-	quiet      bool
-	noNetrc    bool
-	daemon     bool
+	parallel            int
+	output              string
+	speedLimit          string
+	timeout             int
+	inputFile           string
+	dir                 string
+	adaptive            bool
+	insecure            bool
+	quiet               bool
+	noNetrc             bool
+	daemon              bool
+	streamPieceSelector string
+	uriSelector         string
 )
 
 var downloadCmd = &cobra.Command{
@@ -244,6 +246,14 @@ func doDownload(url, outputPath string) error {
 
 	if noNetrc {
 		cfg.NoNetrc = true
+	}
+
+	if streamPieceSelector != "" {
+		cfg.StreamPieceSelector = streamPieceSelector
+	}
+
+	if uriSelector != "" {
+		cfg.UriSelector = uriSelector
 	}
 
 	cfg.Quiet = quiet
@@ -710,6 +720,8 @@ func init() {
 	downloadCmd.Flags().BoolVar(&adaptive, "adaptive", false, "自适应线程数 (根据网络状况自动调整)")
 	downloadCmd.Flags().BoolVarP(&insecure, "insecure", "k", false, "跳过TLS证书验证")
 	downloadCmd.Flags().BoolVarP(&noNetrc, "no-netrc", "n", false, "禁用 netrc 凭证读取")
+	downloadCmd.Flags().StringVar(&streamPieceSelector, "stream-piece-selector", "", "分片选择策略: inorder|geom|random (默认 inorder)")
+	downloadCmd.Flags().StringVar(&uriSelector, "uri-selector", "", "URI 选择器: inorder|feedback|adaptive (默认 feedback)")
 
 	serveCmd.Flags().BoolVarP(&daemon, "daemon", "D", false, "以守护进程方式运行 (仅 Unix)")
 

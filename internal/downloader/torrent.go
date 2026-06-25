@@ -3,6 +3,7 @@ package downloader
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/anacrolix/dht/v2"
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
+	"github.com/anacrolix/torrent/mse"
 	"github.com/nexus-dl/afd/pkg/config"
 	"github.com/nexus-dl/afd/pkg/logger"
 	"go.uber.org/zap"
@@ -42,6 +44,9 @@ type BTConfig struct {
 	LocalPeerDiscovery bool
 	EnableSeeding      bool
 	SelectFiles        []string // 选择性下载的文件路径列表
+	RequireEncryption  bool     // 强制加密（MSE）
+	MinCryptoLevel     string   // plain/arc4
+	WebSeeds           []string // WebSeed URL 列表
 }
 
 type TorrentDownloader struct {
@@ -199,6 +204,51 @@ func createTorrentClient(cfg *BTConfig) (*torrent.Client, error) {
 		clientCfg.EstablishedConnsPerTorrent = 50
 	}
 
+	// 配置 MSE（Message Stream Encryption）头部混淆与加密方法。
+	// anacrolix/torrent 的 HeaderObfuscationPolicy 字段为 RequirePreferred 与 Preferred：
+	//   - RequirePreferred=true 表示 Preferred 是强制要求（拒绝不符合的连接）
+	//   - Preferred=true 表示偏好头部混淆
+	if cfg.RequireEncryption {
+		clientCfg.HeaderObfuscationPolicy = torrent.HeaderObfuscationPolicy{
+			RequirePreferred: true,
+			Preferred:        true,
+		}
+		// 强制加密时仅提供 RC4
+		clientCfg.CryptoProvides = mse.CryptoMethodRC4
+	} else {
+		// 默认：偏好加密但不强制
+		clientCfg.HeaderObfuscationPolicy = torrent.HeaderObfuscationPolicy{
+			RequirePreferred: false,
+			Preferred:        true,
+		}
+		clientCfg.CryptoProvides = mse.CryptoMethodPlaintext | mse.CryptoMethodRC4
+	}
+
+	// 根据最低加密级别配置接收连接时的 CryptoSelector。
+	// mse.DefaultCryptoSelector 默认偏好 plaintext，若要求 arc4 则强制选择 RC4。
+	minLevel := strings.ToLower(strings.TrimSpace(cfg.MinCryptoLevel))
+	if cfg.RequireEncryption && minLevel == "" {
+		minLevel = "arc4"
+	}
+	switch minLevel {
+	case "arc4":
+		clientCfg.CryptoSelector = func(provided mse.CryptoMethod) mse.CryptoMethod {
+			if provided&mse.CryptoMethodRC4 != 0 {
+				return mse.CryptoMethodRC4
+			}
+			return 0 // 拒绝不支持 RC4 的连接
+		}
+	default:
+		// plain 或未设置：使用默认选择器（偏好 plaintext）
+		clientCfg.CryptoSelector = mse.DefaultCryptoSelector
+	}
+
+	// WebSeed 支持：确保未禁用，并设置默认的 HTTP RoundTripper。
+	clientCfg.DisableWebseeds = false
+	if clientCfg.WebTransport == nil {
+		clientCfg.WebTransport = http.DefaultTransport
+	}
+
 	client, err := torrent.NewClient(clientCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create torrent client: %w", err)
@@ -208,30 +258,38 @@ func createTorrentClient(cfg *BTConfig) (*torrent.Client, error) {
 }
 
 func (d *TorrentDownloader) addTorrent(ctx context.Context) (*torrent.Torrent, error) {
+	var t *torrent.Torrent
 	if IsMagnetLink(d.url) {
 		d.logger.Infow("Adding magnet link", "url", d.url)
-		t, err := d.client.AddMagnet(d.url)
+		var err error
+		t, err = d.client.AddMagnet(d.url)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add magnet link: %w", err)
 		}
-		return t, nil
-	}
-
-	if IsTorrentFile(d.url) {
+	} else if IsTorrentFile(d.url) {
 		d.logger.Infow("Adding torrent file", "path", d.url)
 		mi, err := metainfo.LoadFromFile(d.url)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load torrent file: %w", err)
 		}
+		// TorrentSpecFromMetaInfo 会从 .torrent 文件的 "url-list" 字段自动填充 Webseeds。
 		spec := torrent.TorrentSpecFromMetaInfo(mi)
-		t, _, err := d.client.AddTorrentSpec(spec)
+		t, _, err = d.client.AddTorrentSpec(spec)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add torrent: %w", err)
 		}
-		return t, nil
+	} else {
+		return nil, fmt.Errorf("unsupported torrent source: %s", d.url)
 	}
 
-	return nil, fmt.Errorf("unsupported torrent source: %s", d.url)
+	// 追加配置中指定的 WebSeed URL（对 magnet link 尤其有用，因为 magnet 不携带 url-list）。
+	// AddWebSeeds 签名：func (t *Torrent) AddWebSeeds(urls []string, opts ...AddWebSeedsOpt)
+	if len(d.cfg.WebSeeds) > 0 {
+		d.logger.Infow("Adding web seeds", "count", len(d.cfg.WebSeeds))
+		t.AddWebSeeds(d.cfg.WebSeeds)
+	}
+
+	return t, nil
 }
 
 func (d *TorrentDownloader) Download(ctx context.Context) error {
@@ -593,6 +651,9 @@ func NewBTDownloaderFromURL(cfg *config.DownloadConfig, url, outputPath string) 
 		btCfg.UPNPEnabled = cfg.BT.UPNPEnabled
 		btCfg.LocalPeerDiscovery = cfg.BT.LocalPeerDiscovery
 		btCfg.EnableSeeding = cfg.BT.EnableSeeding
+		btCfg.RequireEncryption = cfg.BT.RequireEncryption
+		btCfg.MinCryptoLevel = cfg.BT.MinCryptoLevel
+		btCfg.WebSeeds = cfg.BT.WebSeeds
 	}
 	return NewBTDownloader(btCfg, url, outputPath), nil
 }

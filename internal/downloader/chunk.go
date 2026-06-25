@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"encoding/base64"
+	"math/rand"
 	"sync"
 
 	"github.com/nexus-dl/afd/internal/task"
@@ -394,16 +395,18 @@ func SplitFileIntoPieces(fileSize int64, cfg *config.DownloadConfig) []*Piece {
 
 // PieceManager 管理所有 Pieces，提供线程安全的 Piece 分配和 Segment Stealing
 type PieceManager struct {
-	pieces    []*Piece
-	mu        sync.Mutex
-	fileSize  int64
-	cuidSeq   int64
+	pieces        []*Piece
+	mu            sync.Mutex
+	fileSize      int64
+	cuidSeq       int64
+	pieceSelector string // inorder/geom/random
 }
 
-func NewPieceManager(pieces []*Piece, fileSize int64) *PieceManager {
+func NewPieceManager(pieces []*Piece, fileSize int64, pieceSelector string) *PieceManager {
 	return &PieceManager{
-		pieces:   pieces,
-		fileSize: fileSize,
+		pieces:        pieces,
+		fileSize:      fileSize,
+		pieceSelector: pieceSelector,
 	}
 }
 
@@ -421,14 +424,54 @@ func (pm *PieceManager) GetPieceForDownload(cuid int64) *Piece {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	for _, p := range pm.pieces {
-		if p.Status() == PieceIdle {
-			p.SetStatus(PieceActive)
-			p.SetOwner(cuid)
-			return p
+	switch pm.pieceSelector {
+	case "geom":
+		// geom: 从中间开始，交替向两端扩展（适合流媒体）
+		// index 顺序: mid, mid-1, mid+1, mid-2, mid+2, ...
+		total := len(pm.pieces)
+		mid := total / 2
+		for i := 0; i < total; i++ {
+			var idx int
+			if i%2 == 0 {
+				idx = mid - i/2
+			} else {
+				idx = mid + (i+1)/2
+			}
+			if idx >= 0 && idx < total && pm.pieces[idx].Status() == PieceIdle {
+				pm.pieces[idx].SetStatus(PieceActive)
+				pm.pieces[idx].SetOwner(cuid)
+				return pm.pieces[idx]
+			}
 		}
+		return nil
+
+	case "random":
+		// random: 随机选择一个 idle piece
+		var idle []int
+		for i := range pm.pieces {
+			if pm.pieces[i].Status() == PieceIdle {
+				idle = append(idle, i)
+			}
+		}
+		if len(idle) == 0 {
+			return nil
+		}
+		idx := idle[rand.Intn(len(idle))]
+		pm.pieces[idx].SetStatus(PieceActive)
+		pm.pieces[idx].SetOwner(cuid)
+		return pm.pieces[idx]
+
+	default:
+		// inorder 或 "": 顺序选择第一个 idle piece（默认行为）
+		for _, p := range pm.pieces {
+			if p.Status() == PieceIdle {
+				p.SetStatus(PieceActive)
+				p.SetOwner(cuid)
+				return p
+			}
+		}
+		return nil
 	}
-	return nil
 }
 
 // TryStealPiece 尝试从一个慢速活跃 Piece 中偷走后半段

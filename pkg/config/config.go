@@ -69,6 +69,9 @@ type BTConfig struct {
 	UPNPEnabled        bool          `json:"upnp_enabled" yaml:"upnp_enabled"`
 	LocalPeerDiscovery bool          `json:"local_peer_discovery" yaml:"local_peer_discovery"`
 	EnableSeeding      bool          `json:"enable_seeding" yaml:"enable_seeding"`
+	RequireEncryption  bool          `json:"require_encryption" yaml:"require_encryption"` // 强制加密（MSE）
+	MinCryptoLevel     string        `json:"min_crypto_level" yaml:"min_crypto_level"`     // plain/arc4
+	WebSeeds           []string      `json:"web_seeds" yaml:"web_seeds"`                   // WebSeed URL 列表
 }
 
 type ScheduleSpeedLimit struct {
@@ -138,6 +141,10 @@ type DownloadConfig struct {
 	CheckIntegrity   bool              `json:"check_integrity" yaml:"check_integrity"`
 	AutoSaveInterval int               `json:"auto_save_interval" yaml:"auto_save_interval"` // 秒，0=禁用
 	FileAllocation   string            `json:"file_allocation" yaml:"file_allocation"`       // none/prealloc/falloc/trunc
+
+	// aria2 兼容选项
+	StreamPieceSelector string `json:"stream_piece_selector" yaml:"stream_piece_selector"` // inorder/geom/random
+	UriSelector         string `json:"uri_selector" yaml:"uri_selector"`                   // inorder/feedback/adaptive
 }
 
 func (c *DownloadConfig) Validate() error {
@@ -339,6 +346,8 @@ func DefaultDownloadConfig() *DownloadConfig {
 		FileAllocation:      "trunc",
 		AutoSaveInterval:    60,
 		CheckIntegrity:      false,
+		StreamPieceSelector: "inorder",
+		UriSelector:         "feedback",
 	}
 }
 

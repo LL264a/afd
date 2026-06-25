@@ -75,6 +75,9 @@ type Downloader struct {
 	lastSaveTime  time.Time
 	sinceLastSave int64
 	saveInterval  time.Duration
+
+	serverStatMan *ServerStatMan
+	uriSelector   string
 }
 
 func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downloader {
@@ -170,6 +173,8 @@ func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downl
 		saveInterval:   saveInterval,
 		rateLimiter:    rateLimiter,
 		conditionalGet: cfg.ConditionalGet,
+		serverStatMan:  NewServerStatMan(),
+		uriSelector:    cfg.UriSelector,
 	}
 
 	// 加载 netrc（除非显式禁用）
@@ -560,7 +565,7 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 
 	// 使用 Piece+Block 模型
 	pieces := SplitFileIntoPieces(fileSize, d.cfg)
-	pm := NewPieceManager(pieces, fileSize)
+	pm := NewPieceManager(pieces, fileSize, d.cfg.StreamPieceSelector)
 	d.pieceMgr = pm
 
 	d.logger.Infow("pieces prepared", "total_pieces", len(pieces))
@@ -1011,6 +1016,9 @@ func (d *Downloader) getSizeViaGet(ctx context.Context) (int64, bool, error) {
 func (d *Downloader) downloadPiece(ctx context.Context, file *os.File, piece *Piece, endOffset int64, pm *PieceManager) error {
 	urls := []string{d.url}
 	urls = append(urls, d.getAltURLs()...)
+	if d.serverStatMan != nil {
+		urls = d.serverStatMan.SortURLsBySelector(urls, d.uriSelector)
+	}
 
 	backoff := time.Second
 	maxBackoff := 30 * time.Second
@@ -1070,7 +1078,28 @@ func (d *Downloader) downloadPiece(ctx context.Context, file *os.File, piece *Pi
 }
 
 // downloadPieceOnceFromURL 从指定 URL 下载一个 Piece 的一次尝试
-func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File, piece *Piece, endOffset int64, pm *PieceManager, downloadURL string, minSpeed int64, minSpeedTimeout time.Duration) error {
+func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File, piece *Piece, endOffset int64, pm *PieceManager, downloadURL string, minSpeed int64, minSpeedTimeout time.Duration) (err error) {
+	startTime := time.Now()
+	var totalBytes int64
+	defer func() {
+		if d.serverStatMan == nil {
+			return
+		}
+		if err != nil {
+			// 不记录 context 取消导致的失败
+			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				d.serverStatMan.RecordFailure(downloadURL)
+			}
+			return
+		}
+		if totalBytes > 0 {
+			elapsed := time.Since(startTime)
+			if elapsed > 0 {
+				d.serverStatMan.RecordSpeed(downloadURL, int64(float64(totalBytes)/elapsed.Seconds()))
+			}
+		}
+	}()
+
 	buf := make([]byte, d.cfg.BufferSize)
 	// 使用 block 级别下载
 	for {
@@ -1169,6 +1198,7 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 
 				written := int64(n)
 				atomic.AddInt64(&d.totalDownloaded, written)
+				totalBytes += written
 
 				if d.recordSpeedAndCheckSave(written) {
 					if err := d.SaveProgress(); err != nil {
@@ -1271,6 +1301,9 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 func (d *Downloader) downloadRange(ctx context.Context, file *os.File, start, end int64, piece *Piece) error {
 	urls := []string{d.url}
 	urls = append(urls, d.getAltURLs()...)
+	if d.serverStatMan != nil {
+		urls = d.serverStatMan.SortURLsBySelector(urls, d.uriSelector)
+	}
 
 	backoff := time.Second
 	maxBackoff := 30 * time.Second
@@ -1321,7 +1354,27 @@ func (d *Downloader) downloadRange(ctx context.Context, file *os.File, start, en
 }
 
 // downloadRangeOnceFromURL 从指定 URL 下载一个范围的一次尝试
-func (d *Downloader) downloadRangeOnceFromURL(ctx context.Context, file *os.File, start, end int64, piece *Piece, downloadURL string) error {
+func (d *Downloader) downloadRangeOnceFromURL(ctx context.Context, file *os.File, start, end int64, piece *Piece, downloadURL string) (err error) {
+	startTime := time.Now()
+	var totalBytes int64
+	defer func() {
+		if d.serverStatMan == nil {
+			return
+		}
+		if err != nil {
+			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				d.serverStatMan.RecordFailure(downloadURL)
+			}
+			return
+		}
+		if totalBytes > 0 {
+			elapsed := time.Since(startTime)
+			if elapsed > 0 {
+				d.serverStatMan.RecordSpeed(downloadURL, int64(float64(totalBytes)/elapsed.Seconds()))
+			}
+		}
+	}()
+
 	req, err := d.newGetRequest(ctx, downloadURL)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
@@ -1362,6 +1415,7 @@ func (d *Downloader) downloadRangeOnceFromURL(ctx context.Context, file *os.File
 			written := int64(n)
 			currentOffset += written
 			atomic.AddInt64(&d.totalDownloaded, written)
+			totalBytes += written
 
 			if d.recordSpeedAndCheckSave(written) {
 				if err := d.SaveProgress(); err != nil {
