@@ -214,6 +214,14 @@ type APIConfig struct {
 	RateLimit          int      `json:"rate_limit" yaml:"rate_limit"`
 	EnableCORS         bool     `json:"enable_cors" yaml:"enable_cors"`
 	CORSAllowedOrigins []string `json:"cors_allowed_origins,omitempty" yaml:"cors_allowed_origins,omitempty"`
+
+	// HTTP TLS 支持。启用后 Start() 会以 ListenAndServeTLS 启动。
+	TLSEnabled  bool   `json:"tls_enabled,omitempty" yaml:"tls_enabled,omitempty"`
+	TLSCertFile string `json:"tls_cert_file,omitempty" yaml:"tls_cert_file,omitempty"`
+	TLSKeyFile  string `json:"tls_key_file,omitempty" yaml:"tls_key_file,omitempty"`
+
+	// pprof 调试端点开关。默认启用；若配置了 AuthToken 则端点同样需要认证。
+	EnablePprof *bool `json:"enable_pprof,omitempty" yaml:"enable_pprof,omitempty"`
 }
 
 func (c *APIConfig) Validate() error {
@@ -222,6 +230,11 @@ func (c *APIConfig) Validate() error {
 	}
 	if c.RateLimit < 0 {
 		return fmt.Errorf("rate_limit must be non-negative")
+	}
+	if c.TLSEnabled {
+		if c.TLSCertFile == "" || c.TLSKeyFile == "" {
+			return fmt.Errorf("tls_enabled requires both tls_cert_file and tls_key_file")
+		}
 	}
 	return nil
 }
@@ -496,6 +509,27 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.API.RateLimit = limit
 		} else {
 			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_API_RATE_LIMIT: %s\n", v)
+		}
+	}
+	if v := os.Getenv("NEXUS_API_TLS_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.API.TLSEnabled = b
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_API_TLS_ENABLED: %s\n", v)
+		}
+	}
+	if v := os.Getenv("NEXUS_API_TLS_CERT_FILE"); v != "" {
+		cfg.API.TLSCertFile = v
+	}
+	if v := os.Getenv("NEXUS_API_TLS_KEY_FILE"); v != "" {
+		cfg.API.TLSKeyFile = v
+	}
+	if v := os.Getenv("NEXUS_API_ENABLE_PPROF"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			bv := b
+			cfg.API.EnablePprof = &bv
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_API_ENABLE_PPROF: %s\n", v)
 		}
 	}
 	if v := os.Getenv("NEXUS_CLUSTER_GRPC_PORT"); v != "" {

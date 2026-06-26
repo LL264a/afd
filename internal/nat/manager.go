@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -30,6 +31,7 @@ type NATManager struct {
 	relayServer     string
 	listener        *net.TCPListener
 	connections     map[string]*NATConnection
+	holePuncher     *HolePuncher
 	mu              sync.RWMutex
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -46,7 +48,7 @@ type NATConnection struct {
 
 func NewNATManager(cfg config.NATConfig) *NATManager {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &NATManager{
+	nm := &NATManager{
 		config:          cfg,
 		signalingServer: cfg.SignalingServer,
 		stunServer:      cfg.STUNServer,
@@ -55,24 +57,46 @@ func NewNATManager(cfg config.NATConfig) *NATManager {
 		ctx:             ctx,
 		cancel:          cancel,
 	}
+	nm.holePuncher = NewHolePuncher()
+	return nm
 }
 
 func (nm *NATManager) Connect(peerID, peerAddr string) (*NATConnection, error) {
 	logger.Log.Infof("NAT: connecting to peer %s at %s", peerID, peerAddr)
 
+	// 1. 尝试直连
 	conn, err := nm.tryDirectConnect(peerID, peerAddr)
-	if err != nil {
-		logger.Log.Warnf("NAT: direct connect failed for peer %s: %v, trying relay", peerID, err)
-		conn, err = nm.useRelay(peerID, peerAddr)
-		if err != nil {
-			return nil, fmt.Errorf("NAT: both direct connect and relay failed: %w", err)
+	if err == nil {
+		nm.mu.Lock()
+		nm.connections[peerID] = conn
+		nm.mu.Unlock()
+		logger.Log.Infof("NAT: connected to peer %s via %s", peerID, conn.ConnType)
+		return conn, nil
+	}
+	logger.Log.Warnf("NAT: direct connect failed for peer %s: %v", peerID, err)
+
+	// 2. 尝试打洞
+	if nm.holePuncher != nil {
+		conn, err = nm.tryHolePunch(peerID, peerAddr)
+		if err == nil {
+			nm.mu.Lock()
+			nm.connections[peerID] = conn
+			nm.mu.Unlock()
+			logger.Log.Infof("NAT: connected to peer %s via %s", peerID, conn.ConnType)
+			return conn, nil
 		}
+		logger.Log.Warnf("NAT: hole punch failed for peer %s: %v", peerID, err)
+	}
+
+	// 3. 回退到中继
+	conn, err = nm.useRelay(peerID, peerAddr)
+	if err != nil {
+		return nil, fmt.Errorf("NAT: direct, hole punch and relay all failed: %w", err)
 	}
 
 	nm.mu.Lock()
 	nm.connections[peerID] = conn
 	nm.mu.Unlock()
-
 	logger.Log.Infof("NAT: connected to peer %s via %s", peerID, conn.ConnType)
 	return conn, nil
 }
@@ -114,6 +138,53 @@ func (nm *NATManager) useRelay(peerID, peerAddr string) (*NATConnection, error) 
 		Conn:       conn,
 		ConnType:   ConnectionRelay,
 		LocalAddr:  localAddr,
+		RemoteAddr: remoteAddr,
+		CreatedAt:  time.Now(),
+	}, nil
+}
+
+func (nm *NATManager) tryHolePunch(peerID, peerAddr string) (*NATConnection, error) {
+	// 每次打洞使用新建的 HolePuncher，避免 stopCh/conn 复用导致的生命周期问题。
+	hp := NewHolePuncher()
+	if err := hp.Start(); err != nil {
+		return nil, fmt.Errorf("hole puncher start failed: %w", err)
+	}
+
+	host, portStr, err := net.SplitHostPort(peerAddr)
+	if err != nil {
+		hp.Stop()
+		return nil, fmt.Errorf("invalid peer address: %w", err)
+	}
+	remotePort, err := strconv.ParseUint(portStr, 10, 16)
+	if err != nil {
+		hp.Stop()
+		return nil, fmt.Errorf("invalid peer port: %w", err)
+	}
+
+	localHost, localPortStr, _ := net.SplitHostPort(hp.LocalAddr())
+	localPort, _ := strconv.ParseUint(localPortStr, 10, 16)
+
+	if err := hp.Punch(peerAddr, localHost, uint16(localPort), host, uint16(remotePort)); err != nil {
+		hp.Stop()
+		return nil, fmt.Errorf("hole punch failed: %w", err)
+	}
+
+	nm.holePuncher = hp
+	conn := hp.GetConn()
+
+	var remoteAddr net.Addr
+	if ra := hp.RemoteAddr(); ra != "" {
+		remoteAddr, _ = net.ResolveUDPAddr("udp", ra)
+	}
+	if remoteAddr == nil {
+		remoteAddr = conn.RemoteAddr()
+	}
+
+	return &NATConnection{
+		PeerID:     peerID,
+		Conn:       conn,
+		ConnType:   ConnectionHolePunch,
+		LocalAddr:  conn.LocalAddr(),
 		RemoteAddr: remoteAddr,
 		CreatedAt:  time.Now(),
 	}, nil

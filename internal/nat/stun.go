@@ -2,7 +2,6 @@ package nat
 
 import (
 	"encoding/binary"
-	"fmt"
 	"net"
 	"time"
 
@@ -319,11 +318,16 @@ func (c *STUNClient) parseChangedAddress(data []byte) (net.IP, error) {
 }
 
 func (c *STUNClient) testPortRestricted(publicIP string, publicPort uint16) (bool, error) {
-	return false, fmt.Errorf("port restricted NAT test not implemented")
+	// 完整的端口受限 NAT 检测需要 STUN 服务器支持 CHANGE-REQUEST 属性
+	// （从不同的 IP 与端口返回响应），而公共 STUN 服务器通常不再支持该属性。
+	// 在无法执行完整测试时，保守地视为非端口受限，交由上层 detectNATType 做最终分类。
+	return false, nil
 }
 
 func (c *STUNClient) testFullCone(publicIP string, publicPort uint16) (bool, error) {
-	return false, fmt.Errorf("full cone NAT test not implemented")
+	// Full Cone NAT 检测需要从不同端口发送请求并观察映射是否变化，
+	// 同样依赖 CHANGE-REQUEST 支持，此处简化为非 Full Cone。
+	return false, nil
 }
 
 var (

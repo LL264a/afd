@@ -381,8 +381,10 @@ func (q *TaskQueue) MaxConcurrent() int {
 // ChangePosition adjusts the position of a waiting task in the queue.
 // how can be "POS_SET" (absolute), "POS_CUR" (relative to current), or
 // "POS_END" (relative to end). Returns the new position.
-// Note: since the queue is priority-based, this currently returns the
-// computed position without truly reordering the heap.
+//
+// The priority queue is a heap ordered by priority, so a true reorder
+// requires draining the heap, moving the target item to its new slot,
+// reassigning priorities to match the new order, and rebuilding the heap.
 func (q *TaskQueue) ChangePosition(id string, pos int, how string) (int, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -394,22 +396,26 @@ func (q *TaskQueue) ChangePosition(id string, pos int, how string) (int, error) 
 		return 0, fmt.Errorf("task %s is not in waiting queue", id)
 	}
 
-	// Build a snapshot of waiting tasks to compute positions
-	waiting := make([]*Task, 0)
-	for _, t := range q.tasks {
-		if t.GetStatus() == StatusPending {
-			waiting = append(waiting, t)
-		}
+	// Drain the heap into a slice ordered by current priority (pop order).
+	items := make([]*priorityItem, 0, q.pq.Len())
+	for q.pq.Len() > 0 {
+		items = append(items, heap.Pop(&q.pq).(*priorityItem))
 	}
 
+	// Locate the target item's current position in priority order.
 	curPos := -1
-	for i, t := range waiting {
-		if t.ID == id {
+	for i, item := range items {
+		if item.task.ID == id {
 			curPos = i
 			break
 		}
 	}
 	if curPos < 0 {
+		// Defensive: task is Pending but not in the heap. Restore the heap
+		// before reporting the error so the queue stays usable.
+		for _, item := range items {
+			heap.Push(&q.pq, item)
+		}
 		return 0, fmt.Errorf("task %s not found in waiting queue", id)
 	}
 
@@ -420,20 +426,38 @@ func (q *TaskQueue) ChangePosition(id string, pos int, how string) (int, error) 
 	case "POS_CUR":
 		newPos = curPos + pos
 	case "POS_END":
-		newPos = len(waiting) - 1 + pos
+		newPos = len(items) - 1 + pos
 	default:
+		for _, item := range items {
+			heap.Push(&q.pq, item)
+		}
 		return 0, fmt.Errorf("invalid how parameter: %s", how)
 	}
 
 	if newPos < 0 {
 		newPos = 0
 	}
-	if newPos >= len(waiting) {
-		newPos = len(waiting) - 1
+	if newPos >= len(items) {
+		newPos = len(items) - 1
 	}
 
-	// TODO: adjust task priorities to truly reflect the new position.
-	// The priority queue orders by Priority field, so a true reorder
-	// would require recalculating priorities for all waiting tasks.
+	// Shift elements to move the item from curPos to newPos.
+	moved := items[curPos]
+	if newPos > curPos {
+		copy(items[curPos:newPos], items[curPos+1:newPos+1])
+	} else {
+		copy(items[newPos+1:curPos+1], items[newPos:curPos])
+	}
+	items[newPos] = moved
+
+	// Reassign priorities to match the new linear order and rebuild the heap.
+	// Using the slice index as the priority guarantees the heap pop order
+	// reflects the requested position.
+	for i, item := range items {
+		item.priority = i
+		item.task.Priority = i
+		heap.Push(&q.pq, item)
+	}
+
 	return newPos, nil
 }

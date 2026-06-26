@@ -7,6 +7,7 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 var (
@@ -41,18 +42,22 @@ func Init(level string, logFile string) error {
 	var core zapcore.Core
 	var fileWriter io.Closer
 	if logFile != "" {
-		// Mode 0600 (not 0644) so other users on the same host cannot
-		// read potentially sensitive request URLs, cookies, or tokens
-		// that the logger may surface at debug level.
-		file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-		if err != nil {
-			return err
+		// 日志轮转：使用 lumberjack 按大小/数量/天数滚动，避免日志文件无限增长。
+		// 文件权限由 lumberjack 在创建时设置为 0600（与其他用户隔离），保留
+		// 原有的安全语义：防止同主机其他用户读取可能包含敏感请求 URL、
+		// cookie 或 token 的调试日志。
+		lj := &lumberjack.Logger{
+			Filename:   logFile,
+			MaxSize:    100, // MB
+			MaxBackups: 3,
+			MaxAge:     30, // days
+			Compress:   true,
 		}
-		fileWriter = file
+		fileWriter = lj
 		fileEncoder := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
 		consoleEncoder := zapcore.NewConsoleEncoder(encoderConfig)
 
-		fileCore := zapcore.NewCore(fileEncoder, zapcore.AddSync(file), lvl)
+		fileCore := zapcore.NewCore(fileEncoder, zapcore.AddSync(lj), lvl)
 		consoleCore := zapcore.NewCore(consoleEncoder, zapcore.AddSync(os.Stderr), lvl)
 		core = zapcore.NewTee(fileCore, consoleCore)
 	} else {

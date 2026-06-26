@@ -778,30 +778,72 @@ func (s *JSONRPCServer) changePosition(params []any) (any, error) {
 	}
 	pos := paramInt(params, 1)
 	how := paramString(params, 2)
-	if _, err := s.taskQueue.Get(gid); err != nil {
-		return nil, newJSONRPCError(-1, fmt.Errorf("Task not found: %s", gid))
+	if how == "" {
+		how = "POS_SET"
 	}
-	s.logger.Debugw("changePosition", "gid", gid, "pos", pos, "how", how)
-	return "OK", nil
+	newPos, err := s.taskQueue.ChangePosition(gid, pos, how)
+	if err != nil {
+		return nil, newJSONRPCError(-1, err)
+	}
+	return newPos, nil
 }
 
+// changeUri implements aria2.changeUri(gid, fileIndex, delUris[], addUris[]).
+// It returns [removed, added] counts. Because the Task model carries a single
+// URL, the implementation removes the current URL if it appears in delUris and
+// replaces it with the first entry from addUris when available.
 func (s *JSONRPCServer) changeUri(params []any) (any, error) {
 	gid := paramString(params, 0)
 	if gid == "" {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
 	}
-	uris := paramStringSlice(params, 1)
-	pos := paramInt(params, 2)
-	if _, err := s.taskQueue.Get(gid); err != nil {
-		return nil, newJSONRPCError(-1, fmt.Errorf("Task not found: %s", gid))
-	}
-	for _, u := range uris {
+	// fileIndex is 1-based in aria2; the task model only has one file so it
+	// is accepted for API compatibility but ignored.
+	fileIndex := paramInt(params, 1)
+	_ = fileIndex
+	delUris := paramStringSlice(params, 2)
+	addUris := paramStringSlice(params, 3)
+
+	for _, u := range addUris {
 		if !isValidURL(u) {
 			return nil, newJSONRPCError(-1, fmt.Errorf("Invalid URI: %s", u))
 		}
 	}
-	s.logger.Debugw("changeUri", "gid", gid, "uris", uris, "pos", pos)
-	return []string{gid}, nil
+
+	t, err := s.taskQueue.Get(gid)
+	if err != nil {
+		return nil, newJSONRPCError(-1, fmt.Errorf("Task not found: %s", gid))
+	}
+
+	safe := t.GetSafe()
+	currentURL := safe.URL
+
+	removed := 0
+	added := 0
+
+	for _, u := range delUris {
+		if u == currentURL {
+			removed++
+			break
+		}
+	}
+
+	if len(addUris) > 0 {
+		added = len(addUris)
+		if removed > 0 {
+			// Replace the removed URL with the first new URI.
+			t.URL = addUris[0]
+		} else {
+			// Nothing was removed but addUris were supplied. Adopt the first
+			// one as the primary URL so the change is observable.
+			t.URL = addUris[0]
+		}
+	}
+
+	s.persistTask(t)
+	s.logger.Debugw("changeUri", "gid", gid, "fileIndex", fileIndex, "del", delUris, "add", addUris, "removed", removed, "added", added)
+
+	return []int{removed, added}, nil
 }
 
 func (s *JSONRPCServer) saveSession(_ []any) (any, error) {
@@ -838,8 +880,9 @@ func (s *JSONRPCServer) forceShutdown() (any, error) {
 }
 
 func (s *JSONRPCServer) getVersion() (any, error) {
-	return map[string][]string{
-		"version": {s.version},
+	return map[string]any{
+		"version":         s.version,
+		"enabledFeatures": []string{"Async DNS", "BitTorrent", "FTP", "HTTPS", "Message Digest", "Metalink", "S3", "XML-RPC", "WebDAV"},
 	}, nil
 }
 

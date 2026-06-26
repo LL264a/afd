@@ -39,11 +39,12 @@ type PeerInfo struct {
 }
 
 type SignalingClient struct {
-	serverAddr string
-	peerID     string
-	conn       *net.UDPConn
-	localAddr  string
-	stopCh     chan struct{}
+	serverAddr  string
+	peerID      string
+	conn        *net.UDPConn
+	localAddr   string
+	stopCh      chan struct{}
+	queryRespCh chan *SignalingMessage
 }
 
 func NewSignalingServer(addr string) *SignalingServer {
@@ -168,9 +169,10 @@ func (s *SignalingServer) Stop() {
 
 func NewSignalingClient(serverAddr, peerID string) *SignalingClient {
 	return &SignalingClient{
-		serverAddr: serverAddr,
-		peerID:     peerID,
-		stopCh:     make(chan struct{}),
+		serverAddr:  serverAddr,
+		peerID:      peerID,
+		stopCh:      make(chan struct{}),
+		queryRespCh: make(chan *SignalingMessage, 1),
 	}
 }
 
@@ -218,6 +220,13 @@ func (c *SignalingClient) handleMessages() {
 		}
 
 		logger.Log.Debugf("Received message type: %s", msg.Type)
+
+		if msg.Type == "response" {
+			select {
+			case c.queryRespCh <- &msg:
+			default:
+			}
+		}
 	}
 }
 
@@ -232,6 +241,12 @@ func (c *SignalingClient) Register(natType string) error {
 }
 
 func (c *SignalingClient) QueryPeer(peerID string) (*SignalingMessage, error) {
+	// 清空可能残留的旧响应，避免读到上一次查询的结果
+	select {
+	case <-c.queryRespCh:
+	default:
+	}
+
 	msg := SignalingMessage{
 		Type:   "query",
 		PeerID: peerID,
@@ -239,7 +254,16 @@ func (c *SignalingClient) QueryPeer(peerID string) (*SignalingMessage, error) {
 	if err := c.sendMessage(msg); err != nil {
 		return nil, err
 	}
-	return nil, fmt.Errorf("query response not yet implemented")
+
+	// 等待 handleMessages 路由过来的 "response" 消息（带超时）
+	select {
+	case resp := <-c.queryRespCh:
+		return resp, nil
+	case <-time.After(5 * time.Second):
+		return nil, fmt.Errorf("query response timeout")
+	case <-c.stopCh:
+		return nil, fmt.Errorf("signaling client stopped")
+	}
 }
 
 func (c *SignalingClient) SendOffer(peerID string, offer string) error {

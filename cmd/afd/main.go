@@ -15,9 +15,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nexus-dl/afd/internal"
 	"github.com/nexus-dl/afd/internal/api"
 	"github.com/nexus-dl/afd/internal/cluster"
 	"github.com/nexus-dl/afd/internal/downloader"
+	"github.com/nexus-dl/afd/internal/nat"
+	"github.com/nexus-dl/afd/internal/plugin"
 	"github.com/nexus-dl/afd/internal/task"
 	"github.com/nexus-dl/afd/pkg/config"
 	"github.com/nexus-dl/afd/pkg/logger"
@@ -563,7 +566,67 @@ func runServe() error {
 	hub.SetLocalNode(localNode)
 	go hub.Run()
 
+	// 事件系统
+	eventEmitter := internal.NewEventEmitter(true, 4)
+
+	// 后处理器
+	postProcessor := internal.NewPostProcessor(cfg.Download.PostProcess)
+
+	// 下载管理器
+	downloadMgr := downloader.NewDownloadManager(
+		taskQueue,
+		taskStore,
+		hub,
+		&cfg.Download,
+		eventEmitter,
+		postProcessor,
+	)
+
+	// 接线：任务队列回调 → 下载管理器
+	taskQueue.OnTaskStart = func(t *task.Task) {
+		downloadMgr.StartDownload(t)
+	}
+
+	// 启动下载管理器
+	downloadMgr.Start()
+
 	srv := api.NewServer(cfg, taskQueue, taskStore, membership, localNode, hub, Version)
+
+	// 集群组件
+	scheduler := cluster.NewScheduler(cfg.Node.ID, cfg)
+	failover := cluster.NewFailover(cfg, scheduler)
+	stateSync := cluster.NewStateSync(cfg.Node.ID, cfg)
+
+	// 节点发现（gossip）
+	discCfg := cluster.DiscoveryConfig{
+		BindAddr:   cfg.API.Host,
+		BindPort:   cfg.Cluster.DiscoveryPort,
+		Seeds:      cfg.Cluster.JoinPeers,
+		GossipPort: cfg.Cluster.DiscoveryPort,
+	}
+	discovery := cluster.NewDiscovery(discCfg, localNode, membership)
+
+	// RPC 服务器（集群内部通信）
+	rpcSrvAddr := fmt.Sprintf("%s:%d", cfg.API.Host, cfg.Cluster.GRPCPort)
+	clusterAuth, err := cluster.NewClusterAuth("", "", "")
+	if err != nil {
+		logger.Log.Warnw("failed to create cluster auth", "error", err)
+	}
+	rpcServer := cluster.NewRPCServer(rpcSrvAddr, clusterAuth)
+
+	// Failover 回调：节点故障时重新分配任务
+	failover.SetTaskReassignFn(func(taskID, newNodeID string) error {
+		logger.Log.Infow("reassigning task", "taskID", taskID, "newNode", newNodeID)
+		// TODO: 通过 gRPC 投递任务到新节点
+		return nil
+	})
+
+	// NAT 穿透
+	natManager := nat.NewNATManager(config.NATConfig{})
+
+	// 插件系统
+	pluginMgr := plugin.NewPluginManager()
+	_ = pluginMgr
 
 	api.RegisterGracefulShutdownHandler(func(sig syscall.Signal) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -578,13 +641,34 @@ func runServe() error {
 		if logger.Log != nil {
 			logger.Log.Infow("收到信号，正在关闭", "signal", sig)
 		}
+		// 先停止 server 接收新请求，再停止下载管理器和事件系统
 		_ = srv.Stop()
+		downloadMgr.Stop()
+		_ = eventEmitter.Close()
+		// 停止集群组件
+		rpcServer.Shutdown()
+		discovery.Shutdown()
+		stateSync.Stop()
+		failover.Stop()
+		scheduler.Stop()
+		_ = natManager.Close()
 	}()
 
 	logger.Log.Infow("启动 API 服务器", "addr", srv.Addr)
 	fmt.Printf("RPC  地址: http://%s/jsonrpc\n", srv.Addr)
 	fmt.Printf("XML-RPC 地址: http://%s/xmlrpc\n", srv.Addr)
 	fmt.Println(strings.Repeat("=", 50))
+
+	// 启动集群组件
+	scheduler.Start()
+	failover.Start()
+	stateSync.Start()
+	if err := discovery.Start(); err != nil {
+		logger.Log.Warnw("failed to start discovery", "error", err)
+	}
+	if err := rpcServer.Start(); err != nil {
+		logger.Log.Warnw("failed to start RPC server", "error", err)
+	}
 
 	if err := srv.Start(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("服务器错误: %w", err)

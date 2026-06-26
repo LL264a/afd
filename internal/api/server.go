@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"net/url"
 	"path/filepath"
 	"strconv"
@@ -204,6 +206,29 @@ func NewServer(cfg *config.Config, taskQueue *task.TaskQueue, taskStore *task.Ta
 		})
 	})
 	apiMux.Handle("/metrics", MetricsHandler())
+
+	// pprof 调试端点。默认启用；若配置了 AuthToken 则同样需要认证。
+	// 可通过 api.enable_pprof: false 显式关闭。
+	pprofEnabled := cfg.API.EnablePprof == nil || *cfg.API.EnablePprof
+	if pprofEnabled {
+		pprofMux := http.NewServeMux()
+		pprofMux.HandleFunc("/debug/pprof/", pprof.Index)
+		pprofMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		pprofMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		pprofMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		pprofMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		// pprof 仅套用 Recovery + Auth，避免 Logging 中间件把高频的
+		// profile 采样请求当成业务请求记录到访问日志中。
+		pprofMW := []Middleware{
+			Recovery(),
+			Auth(cfg.API.AuthToken),
+		}
+		mux.Handle("/debug/pprof/", Chain(pprofMux, pprofMW...))
+		mux.Handle("/debug/pprof/cmdline", Chain(pprofMux, pprofMW...))
+		mux.Handle("/debug/pprof/profile", Chain(pprofMux, pprofMW...))
+		mux.Handle("/debug/pprof/symbol", Chain(pprofMux, pprofMW...))
+		mux.Handle("/debug/pprof/trace", Chain(pprofMux, pprofMW...))
+	}
 
 	// Apply middleware to API routes only
 	middlewares := []Middleware{
@@ -543,10 +568,6 @@ func (s *Server) saveSession() {
 }
 
 func (s *Server) Start() error {
-	logger.Log.Infow("Starting API server",
-		"addr", s.Addr,
-	)
-
 	// 启动定时自动保存会话
 	if s.config != nil && s.config.AutoSaveInterval > 0 {
 		s.wg.Add(1)
@@ -556,6 +577,25 @@ func (s *Server) Start() error {
 		}()
 	}
 
+	tlsEnabled := s.config != nil && s.config.API.TLSEnabled &&
+		s.config.API.TLSCertFile != "" && s.config.API.TLSKeyFile != ""
+
+	if tlsEnabled {
+		// 强制 TLS 1.2+，并启用 HTTP/2 协商。
+		s.TLSConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			NextProtos: []string{"h2", "http/1.1"},
+		}
+		logger.Log.Infow("Starting API server (TLS)",
+			"addr", s.Addr,
+			"cert", s.config.API.TLSCertFile,
+		)
+		return s.ListenAndServeTLS(s.config.API.TLSCertFile, s.config.API.TLSKeyFile)
+	}
+
+	logger.Log.Infow("Starting API server",
+		"addr", s.Addr,
+	)
 	return s.ListenAndServe()
 }
 
