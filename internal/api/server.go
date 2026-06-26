@@ -144,8 +144,12 @@ func isValidURL(rawURL string) bool {
 
 func isSafePath(path string) bool {
 	cleaned := filepath.Clean(path)
-	if strings.Contains(cleaned, "..") {
-		return false
+	// 检查路径穿越：按分隔符分段检查 ".."，避免误拦 file..txt 等合法文件名
+	parts := strings.Split(cleaned, string(filepath.Separator))
+	for _, part := range parts {
+		if part == ".." {
+			return false
+		}
 	}
 	// 阻止绝对路径
 	if filepath.IsAbs(cleaned) {

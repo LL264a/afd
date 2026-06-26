@@ -31,7 +31,7 @@ type JSONRPCError struct {
 
 type JSONRPCResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
-	Result  interface{}     `json:"result,omitempty"`
+	Result  any     `json:"result,omitempty"`
 	Error   *JSONRPCError   `json:"error,omitempty"`
 	ID      json.RawMessage `json:"id"`
 }
@@ -94,17 +94,17 @@ func (s *JSONRPCServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var params []interface{}
+	var params []any
 	if len(req.Params) > 0 {
 		dec := json.NewDecoder(strings.NewReader(string(req.Params)))
 		if err := dec.Decode(&params); err != nil {
-			paramMap := map[string]interface{}{}
+			paramMap := map[string]any{}
 			dec2 := json.NewDecoder(strings.NewReader(string(req.Params)))
 			if err2 := dec2.Decode(&paramMap); err2 != nil {
 				sendJSONRPCError(w, req.ID, http.StatusBadRequest, -32602, "Invalid params")
 				return
 			}
-			params = []interface{}{paramMap}
+			params = []any{paramMap}
 		}
 	}
 
@@ -169,7 +169,7 @@ func sendJSONRPCError(w http.ResponseWriter, id json.RawMessage, httpCode, rpcCo
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (s *JSONRPCServer) handleMethod(method string, params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) handleMethod(method string, params []any) (any, error) {
 	switch method {
 	case "aria2.addUri":
 		return s.addUri(params)
@@ -248,7 +248,7 @@ func (s *JSONRPCServer) handleMethod(method string, params []interface{}) (inter
 	}
 }
 
-func paramString(params []interface{}, idx int) string {
+func paramString(params []any, idx int) string {
 	if len(params) <= idx {
 		return ""
 	}
@@ -258,17 +258,17 @@ func paramString(params []interface{}, idx int) string {
 	return ""
 }
 
-func paramMap(params []interface{}, idx int) map[string]interface{} {
+func paramMap(params []any, idx int) map[string]any {
 	if len(params) <= idx {
 		return nil
 	}
-	if m, ok := params[idx].(map[string]interface{}); ok {
+	if m, ok := params[idx].(map[string]any); ok {
 		return m
 	}
 	return nil
 }
 
-func paramInt(params []interface{}, idx int) int {
+func paramInt(params []any, idx int) int {
 	if len(params) <= idx {
 		return 0
 	}
@@ -286,11 +286,11 @@ func paramInt(params []interface{}, idx int) int {
 	return 0
 }
 
-func paramStringSlice(params []interface{}, idx int) []string {
+func paramStringSlice(params []any, idx int) []string {
 	if len(params) <= idx {
 		return nil
 	}
-	arr, ok := params[idx].([]interface{})
+	arr, ok := params[idx].([]any)
 	if !ok {
 		return nil
 	}
@@ -303,7 +303,7 @@ func paramStringSlice(params []interface{}, idx int) []string {
 	return out
 }
 
-func paramKeys(params []interface{}, idx int) []string {
+func paramKeys(params []any, idx int) []string {
 	return paramStringSlice(params, idx)
 }
 
@@ -349,7 +349,7 @@ func formatSpeedLimit(n int64) string {
 	return fmt.Sprintf("%d", n)
 }
 
-func (s *JSONRPCServer) addUri(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) addUri(params []any) (any, error) {
 	uris := paramStringSlice(params, 0)
 	if len(uris) == 0 {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing URIs parameter"))
@@ -376,7 +376,7 @@ func (s *JSONRPCServer) addUri(params []interface{}) (interface{}, error) {
 	return gids, nil
 }
 
-func (s *JSONRPCServer) addTorrent(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) addTorrent(params []any) (any, error) {
 	if len(params) < 1 {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing torrent parameter"))
 	}
@@ -402,7 +402,7 @@ func (s *JSONRPCServer) addTorrent(params []interface{}) (interface{}, error) {
 	return t.ID, nil
 }
 
-func (s *JSONRPCServer) addMetalink(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) addMetalink(params []any) (any, error) {
 	if len(params) < 1 {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing metalink parameter"))
 	}
@@ -414,7 +414,7 @@ func (s *JSONRPCServer) addMetalink(params []interface{}) (interface{}, error) {
 		return nil, newJSONRPCError(-1, fmt.Errorf("Empty metalink"))
 	}
 
-	gids := []string{}
+	gids := make([]string, 0, 1)
 	t := task.NewTask(metalinkField, s.outputDir(nil))
 	if err := s.taskQueue.Add(t); err != nil {
 		return nil, newJSONRPCError(-1, err)
@@ -424,7 +424,7 @@ func (s *JSONRPCServer) addMetalink(params []interface{}) (interface{}, error) {
 	return gids, nil
 }
 
-func (s *JSONRPCServer) remove(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) remove(params []any) (any, error) {
 	gid := paramString(params, 0)
 	if gid == "" {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
@@ -438,7 +438,7 @@ func (s *JSONRPCServer) remove(params []interface{}) (interface{}, error) {
 	return gid, nil
 }
 
-func (s *JSONRPCServer) pause(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) pause(params []any) (any, error) {
 	gid := paramString(params, 0)
 	if gid == "" {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
@@ -449,7 +449,7 @@ func (s *JSONRPCServer) pause(params []interface{}) (interface{}, error) {
 	return gid, nil
 }
 
-func (s *JSONRPCServer) pauseAll(_ []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) pauseAll(_ []any) (any, error) {
 	tasks := s.taskQueue.List()
 	for _, t := range tasks {
 		if t.GetStatus() == task.StatusDownloading {
@@ -461,7 +461,7 @@ func (s *JSONRPCServer) pauseAll(_ []interface{}) (interface{}, error) {
 	return "OK", nil
 }
 
-func (s *JSONRPCServer) unpause(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) unpause(params []any) (any, error) {
 	gid := paramString(params, 0)
 	if gid == "" {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
@@ -472,7 +472,7 @@ func (s *JSONRPCServer) unpause(params []interface{}) (interface{}, error) {
 	return gid, nil
 }
 
-func (s *JSONRPCServer) unpauseAll(_ []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) unpauseAll(_ []any) (any, error) {
 	tasks := s.taskQueue.List()
 	for _, t := range tasks {
 		if t.GetStatus() == task.StatusPaused {
@@ -484,7 +484,7 @@ func (s *JSONRPCServer) unpauseAll(_ []interface{}) (interface{}, error) {
 	return "OK", nil
 }
 
-func (s *JSONRPCServer) tellStatus(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) tellStatus(params []any) (any, error) {
 	gid := paramString(params, 0)
 	if gid == "" {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
@@ -497,10 +497,10 @@ func (s *JSONRPCServer) tellStatus(params []interface{}) (interface{}, error) {
 	return s.taskToStatus(t, keys), nil
 }
 
-func (s *JSONRPCServer) tellActive(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) tellActive(params []any) (any, error) {
 	keys := paramKeys(params, 0)
 	tasks := s.taskQueue.List()
-	out := []interface{}{}
+	out := make([]any, 0, len(tasks))
 	for _, t := range tasks {
 		st := t.GetStatus()
 		if st == task.StatusDownloading || st == task.StatusPending {
@@ -510,12 +510,12 @@ func (s *JSONRPCServer) tellActive(params []interface{}) (interface{}, error) {
 	return out, nil
 }
 
-func (s *JSONRPCServer) tellWaiting(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) tellWaiting(params []any) (any, error) {
 	offset := paramInt(params, 0)
 	num := paramInt(params, 1)
 	keys := paramKeys(params, 2)
 	tasks := s.taskQueue.List()
-	waiting := []*task.Task{}
+	waiting := make([]*task.Task, 0, len(tasks))
 	for _, t := range tasks {
 		if t.GetStatus() == task.StatusPending {
 			waiting = append(waiting, t)
@@ -534,19 +534,19 @@ func (s *JSONRPCServer) tellWaiting(params []interface{}) (interface{}, error) {
 	if num < 0 {
 		num = 0
 	}
-	out := []interface{}{}
+	out := make([]any, 0, len(waiting[offset:end]))
 	for _, t := range waiting[offset:end] {
 		out = append(out, s.taskToStatus(t, keys))
 	}
 	return out, nil
 }
 
-func (s *JSONRPCServer) tellStopped(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) tellStopped(params []any) (any, error) {
 	offset := paramInt(params, 0)
 	num := paramInt(params, 1)
 	keys := paramKeys(params, 2)
 	tasks := s.taskQueue.List()
-	stopped := []*task.Task{}
+	stopped := make([]*task.Task, 0, len(tasks))
 	for _, t := range tasks {
 		st := t.GetStatus()
 		if st == task.StatusDone || st == task.StatusFailed || st == task.StatusCancelled {
@@ -566,14 +566,14 @@ func (s *JSONRPCServer) tellStopped(params []interface{}) (interface{}, error) {
 	if num < 0 {
 		num = 0
 	}
-	out := []interface{}{}
+	out := make([]any, 0, len(stopped[offset:end]))
 	for _, t := range stopped[offset:end] {
 		out = append(out, s.taskToStatus(t, keys))
 	}
 	return out, nil
 }
 
-func (s *JSONRPCServer) getFiles(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) getFiles(params []any) (any, error) {
 	gid := paramString(params, 0)
 	if gid == "" {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
@@ -583,9 +583,9 @@ func (s *JSONRPCServer) getFiles(params []interface{}) (interface{}, error) {
 		return nil, newJSONRPCError(-1, fmt.Errorf("Task not found: %s", gid))
 	}
 	safe := t.GetSafe()
-	files := []map[string]interface{}{}
+	files := make([]map[string]any, 0, 1)
 	if len(safe.Chunks) > 0 {
-		files = append(files, map[string]interface{}{
+		files = append(files, map[string]any{
 			"index":           "1",
 			"path":            filepath.Base(safe.OutputPath),
 			"length":          fmt.Sprintf("%d", safe.TotalSize),
@@ -597,15 +597,15 @@ func (s *JSONRPCServer) getFiles(params []interface{}) (interface{}, error) {
 	return files, nil
 }
 
-func (s *JSONRPCServer) getPeers(_ []interface{}) (interface{}, error) {
-	return []map[string]interface{}{}, nil
+func (s *JSONRPCServer) getPeers(_ []any) (any, error) {
+	return []map[string]any{}, nil
 }
 
-func (s *JSONRPCServer) getServers(_ []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) getServers(_ []any) (any, error) {
 	return []map[string]string{}, nil
 }
 
-func (s *JSONRPCServer) getUris(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) getUris(params []any) (any, error) {
 	gid := paramString(params, 0)
 	if gid == "" {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
@@ -615,12 +615,12 @@ func (s *JSONRPCServer) getUris(params []interface{}) (interface{}, error) {
 		return nil, newJSONRPCError(-1, fmt.Errorf("Task not found: %s", gid))
 	}
 	safe := t.GetSafe()
-	return []map[string]interface{}{
+	return []map[string]any{
 		{"uri": safe.URL, "status": "used"},
 	}, nil
 }
 
-func (s *JSONRPCServer) changeGlobalOption(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) changeGlobalOption(params []any) (any, error) {
 	options := paramMap(params, 0)
 	if options == nil {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing options parameter"))
@@ -665,7 +665,7 @@ func (s *JSONRPCServer) changeGlobalOption(params []interface{}) (interface{}, e
 	return "OK", nil
 }
 
-func (s *JSONRPCServer) changeOption(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) changeOption(params []any) (any, error) {
 	gid := paramString(params, 0)
 	if gid == "" {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
@@ -694,7 +694,7 @@ func (s *JSONRPCServer) changeOption(params []interface{}) (interface{}, error) 
 	return "OK", nil
 }
 
-func (s *JSONRPCServer) getGlobalOption(_ []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) getGlobalOption(_ []any) (any, error) {
 	opts := map[string]string{}
 	if s.config == nil {
 		return opts, nil
@@ -711,7 +711,7 @@ func (s *JSONRPCServer) getGlobalOption(_ []interface{}) (interface{}, error) {
 	return opts, nil
 }
 
-func (s *JSONRPCServer) getOption(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) getOption(params []any) (any, error) {
 	gid := paramString(params, 0)
 	if gid == "" {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
@@ -745,7 +745,7 @@ func (s *JSONRPCServer) getOption(params []interface{}) (interface{}, error) {
 	}, nil
 }
 
-func (s *JSONRPCServer) getGlobalStat(_ []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) getGlobalStat(_ []any) (any, error) {
 	tasks := s.taskQueue.List()
 	var active, waiting, stopped int
 	var speed int64
@@ -761,7 +761,7 @@ func (s *JSONRPCServer) getGlobalStat(_ []interface{}) (interface{}, error) {
 		}
 		speed += safe.Speed
 	}
-	return map[string]interface{}{
+	return map[string]any{
 		"downloadSpeed":   fmt.Sprintf("%d", speed),
 		"uploadSpeed":     "0",
 		"numActive":       fmt.Sprintf("%d", active),
@@ -771,7 +771,7 @@ func (s *JSONRPCServer) getGlobalStat(_ []interface{}) (interface{}, error) {
 	}, nil
 }
 
-func (s *JSONRPCServer) changePosition(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) changePosition(params []any) (any, error) {
 	gid := paramString(params, 0)
 	if gid == "" {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
@@ -785,7 +785,7 @@ func (s *JSONRPCServer) changePosition(params []interface{}) (interface{}, error
 	return "OK", nil
 }
 
-func (s *JSONRPCServer) changeUri(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) changeUri(params []any) (any, error) {
 	gid := paramString(params, 0)
 	if gid == "" {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
@@ -804,7 +804,7 @@ func (s *JSONRPCServer) changeUri(params []interface{}) (interface{}, error) {
 	return []string{gid}, nil
 }
 
-func (s *JSONRPCServer) saveSession(_ []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) saveSession(_ []any) (any, error) {
 	tasks := s.taskQueue.List()
 	for _, t := range tasks {
 		if s.taskStore == nil {
@@ -817,17 +817,17 @@ func (s *JSONRPCServer) saveSession(_ []interface{}) (interface{}, error) {
 	return "OK", nil
 }
 
-func (s *JSONRPCServer) shutdown() (interface{}, error) {
+func (s *JSONRPCServer) shutdown() (any, error) {
 	go func() {
 		time.Sleep(100 * time.Millisecond)
 		if err := requestGracefulShutdown(); err != nil {
-			s.logger.Errorw("Graceful shutdown request failed; relying on signal handler to drive exit", "err", err)
+			s.logger.Warnw("Graceful shutdown request failed; relying on signal handler to drive exit", "err", err)
 		}
 	}()
 	return "OK", nil
 }
 
-func (s *JSONRPCServer) forceShutdown() (interface{}, error) {
+func (s *JSONRPCServer) forceShutdown() (any, error) {
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		if err := requestGracefulShutdown(); err != nil {
@@ -837,25 +837,25 @@ func (s *JSONRPCServer) forceShutdown() (interface{}, error) {
 	return "OK", nil
 }
 
-func (s *JSONRPCServer) getVersion() (interface{}, error) {
+func (s *JSONRPCServer) getVersion() (any, error) {
 	return map[string][]string{
 		"version": {s.version},
 	}, nil
 }
 
-func (s *JSONRPCServer) getSessionInfo() (interface{}, error) {
+func (s *JSONRPCServer) getSessionInfo() (any, error) {
 	return map[string]string{
 		"sessionId": "nexus-dl-" + s.startedAt.Format("20060102-150405"),
 	}, nil
 }
 
-func (s *JSONRPCServer) purgeDownloadResult(_ []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) purgeDownloadResult(_ []any) (any, error) {
 	count := s.taskQueue.PurgeStopped()
 	s.logger.Debugw("purgeDownloadResult", "purged", count)
 	return "OK", nil
 }
 
-func (s *JSONRPCServer) removeDownloadResult(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) removeDownloadResult(params []any) (any, error) {
 	gid := paramString(params, 0)
 	if gid == "" {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing gid parameter"))
@@ -867,11 +867,11 @@ func (s *JSONRPCServer) removeDownloadResult(params []interface{}) (interface{},
 	return gid, nil
 }
 
-func (s *JSONRPCServer) multicall(params []interface{}) (interface{}, error) {
+func (s *JSONRPCServer) multicall(params []any) (any, error) {
 	if len(params) == 0 {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Missing multicall params"))
 	}
-	calls, ok := params[0].([]interface{})
+	calls, ok := params[0].([]any)
 	if !ok {
 		return nil, newJSONRPCError(-32602, fmt.Errorf("Invalid multicall params"))
 	}
@@ -879,29 +879,29 @@ func (s *JSONRPCServer) multicall(params []interface{}) (interface{}, error) {
 	if len(calls) > 32 {
 		return nil, newJSONRPCError(-32603, fmt.Errorf("Too many multicall requests (max 32)"))
 	}
-	results := make([]interface{}, 0, len(calls))
+	results := make([]any, 0, len(calls))
 	for _, c := range calls {
-		callMap, ok := c.(map[string]interface{})
+		callMap, ok := c.(map[string]any)
 		if !ok {
-			results = append(results, map[string]interface{}{"error": map[string]interface{}{"code": -32602, "message": "Invalid call object"}})
+			results = append(results, map[string]any{"error": map[string]any{"code": -32602, "message": "Invalid call object"}})
 			continue
 		}
 		methodName, _ := callMap["methodName"].(string)
 		// 拒绝嵌套 multicall，防止递归导致的栈溢出 DoS
 		if methodName == "system.multicall" {
-			results = append(results, map[string]interface{}{"error": map[string]interface{}{"code": -32600, "message": "Nested multicall is not allowed"}})
+			results = append(results, map[string]any{"error": map[string]any{"code": -32600, "message": "Nested multicall is not allowed"}})
 			continue
 		}
-		callParamsRaw, _ := callMap["params"].([]interface{})
+		callParamsRaw, _ := callMap["params"].([]any)
 		res, err := s.handleMethod(methodName, callParamsRaw)
-		entry := map[string]interface{}{}
+		entry := map[string]any{}
 		if err != nil {
 			code := -32500
 			if e, ok := err.(*jsonRPCError); ok {
 				code = e.code
 				err = e.err
 			}
-			entry["error"] = map[string]interface{}{"code": code, "message": errString(err)}
+			entry["error"] = map[string]any{"code": code, "message": errString(err)}
 			entry["code"] = code
 			entry["message"] = errString(err)
 		} else {
@@ -909,10 +909,10 @@ func (s *JSONRPCServer) multicall(params []interface{}) (interface{}, error) {
 		}
 		results = append(results, entry)
 	}
-	return []interface{}{results}, nil
+	return []any{results}, nil
 }
 
-func (s *JSONRPCServer) listMethods() (interface{}, error) {
+func (s *JSONRPCServer) listMethods() (any, error) {
 	return []string{
 		"aria2.addUri", "aria2.addTorrent", "aria2.addMetalink",
 		"aria2.remove", "aria2.forceRemove",
@@ -930,7 +930,7 @@ func (s *JSONRPCServer) listMethods() (interface{}, error) {
 	}, nil
 }
 
-func (s *JSONRPCServer) listNotifications() (interface{}, error) {
+func (s *JSONRPCServer) listNotifications() (any, error) {
 	return []string{
 		"aria2.onDownloadStart",
 		"aria2.onDownloadPause",
@@ -941,9 +941,9 @@ func (s *JSONRPCServer) listNotifications() (interface{}, error) {
 	}, nil
 }
 
-func (s *JSONRPCServer) taskToStatus(t *task.Task, keys []string) map[string]interface{} {
+func (s *JSONRPCServer) taskToStatus(t *task.Task, keys []string) map[string]any {
 	safe := t.GetSafe()
-	all := map[string]interface{}{
+	all := map[string]any{
 		"gid":             safe.ID,
 		"status":          string(safe.Status),
 		"totalLength":     fmt.Sprintf("%d", safe.TotalSize),
@@ -953,7 +953,7 @@ func (s *JSONRPCServer) taskToStatus(t *task.Task, keys []string) map[string]int
 		"uploadSpeed":     "0",
 		"errorMessage":    safe.Error,
 		"dir":             safe.OutputPath,
-		"files": []map[string]interface{}{
+		"files": []map[string]any{
 			{
 				"index":           "1",
 				"path":            filepath.Base(safe.OutputPath),
@@ -963,7 +963,7 @@ func (s *JSONRPCServer) taskToStatus(t *task.Task, keys []string) map[string]int
 				"uris":            []map[string]string{{"uri": safe.URL, "status": "used"}},
 			},
 		},
-		"bittorrent": map[string]interface{}{
+		"bittorrent": map[string]any{
 			"info": map[string]string{
 				"name": filepath.Base(safe.OutputPath),
 			},
@@ -980,7 +980,7 @@ func (s *JSONRPCServer) taskToStatus(t *task.Task, keys []string) map[string]int
 	if len(keys) == 0 {
 		return all
 	}
-	filtered := make(map[string]interface{}, len(keys))
+	filtered := make(map[string]any, len(keys))
 	for _, k := range keys {
 		if v, ok := all[k]; ok {
 			filtered[k] = v
@@ -989,7 +989,7 @@ func (s *JSONRPCServer) taskToStatus(t *task.Task, keys []string) map[string]int
 	return filtered
 }
 
-func (s *JSONRPCServer) applyOptions(t *task.Task, options map[string]interface{}) error {
+func (s *JSONRPCServer) applyOptions(t *task.Task, options map[string]any) error {
 	if options == nil {
 		return nil
 	}
@@ -1029,7 +1029,7 @@ func (s *JSONRPCServer) applyOptions(t *task.Task, options map[string]interface{
 	return nil
 }
 
-func (s *JSONRPCServer) outputDir(options map[string]interface{}) string {
+func (s *JSONRPCServer) outputDir(options map[string]any) string {
 	if options != nil {
 		if v, ok := options["dir"].(string); ok && v != "" {
 			if isSafePath(v) {

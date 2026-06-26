@@ -143,7 +143,7 @@ func (c *FTPClient) readResponse() (int, string, error) {
 	return code, message, nil
 }
 
-func (c *FTPClient) sendCommand(format string, args ...interface{}) (int, string, error) {
+func (c *FTPClient) sendCommand(format string, args ...any) (int, string, error) {
 	cmd := fmt.Sprintf(format, args...)
 	if c.logger != nil {
 		c.logger.Debugw("FTP command", "cmd", cmd)
@@ -533,7 +533,7 @@ type FTPDownloader struct {
 	startTime       time.Time
 
 	controlFilePath      string
-	controlFile          interface{}
+	controlFile          any
 	controlFileCompleted int64
 	controlFileTotal     int64
 	controlFileStatus    string
@@ -688,7 +688,7 @@ func (d *FTPDownloader) SetControlFilePath(path string) {
 	d.controlFilePath = path
 }
 
-func (d *FTPDownloader) SetControlFile(cf interface{}) {
+func (d *FTPDownloader) SetControlFile(cf any) {
 	d.controlFile = cf
 }
 

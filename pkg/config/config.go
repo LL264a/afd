@@ -40,7 +40,7 @@ func (p *ProxyConfig) ShouldExclude(host string) bool {
 		return false
 	}
 	for _, pattern := range p.ExcludeList {
-		if strings.Contains(host, pattern) {
+		if host == pattern || strings.HasSuffix(host, "."+pattern) {
 			return true
 		}
 	}

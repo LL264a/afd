@@ -2,12 +2,19 @@ package task
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 
 	"github.com/nexus-dl/afd/pkg/logger"
+)
+
+// 哨兵错误：用于 errors.Is 精确匹配，避免依赖字符串比较。
+var (
+	ErrTaskNotFound        = errors.New("task not found")
+	ErrControlFileNotFound = errors.New("control file not found")
 )
 
 type TaskStore struct {
@@ -104,7 +111,7 @@ func (s *TaskStore) Load(id string) (*Task, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("task %s not found", id)
+			return nil, fmt.Errorf("task %s: %w", id, ErrTaskNotFound)
 		}
 		return nil, fmt.Errorf("failed to read task %s: %w", id, err)
 	}
@@ -189,7 +196,7 @@ func (s *TaskStore) Delete(id string) error {
 	path := s.taskPath(id)
 	if err := os.Remove(path); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("task %s not found", id)
+			return fmt.Errorf("task %s: %w", id, ErrTaskNotFound)
 		}
 		return fmt.Errorf("failed to delete task %s: %w", id, err)
 	}

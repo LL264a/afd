@@ -446,8 +446,8 @@ type rpcError struct {
 }
 
 type rpcResponse struct {
-	Result json.RawMessage `json:"result"`
-	Error  *rpcError       `json:"error"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  *rpcError       `json:"error,omitempty"`
 }
 
 type rpcClient struct {
@@ -467,8 +467,8 @@ func newRPCClient(addr, token string) *rpcClient {
 	}
 }
 
-func (c *rpcClient) call(method string, params []interface{}) (json.RawMessage, error) {
-	reqBody := map[string]interface{}{
+func (c *rpcClient) call(method string, params []any) (json.RawMessage, error) {
+	reqBody := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  method,
 		"params":  params,
@@ -595,7 +595,7 @@ func runServe() error {
 
 func runAdd(url string) error {
 	client := newRPCClient(rpcAddr, rpcToken)
-	result, err := client.call("aria2.addUri", []interface{}{[]string{url}})
+	result, err := client.call("aria2.addUri", []any{[]string{url}})
 	if err != nil {
 		return err
 	}
@@ -620,15 +620,15 @@ func runList() error {
 	fmt.Println(strings.Repeat("-", 80))
 
 	for _, method := range []string{"aria2.tellActive", "aria2.tellWaiting", "aria2.tellStopped"} {
-		var params []interface{}
+		var params []any
 		if method == "aria2.tellWaiting" || method == "aria2.tellStopped" {
-			params = []interface{}{0, 1000}
+			params = []any{0, 1000}
 		}
 		result, err := client.call(method, params)
 		if err != nil {
 			return err
 		}
-		var tasks []map[string]interface{}
+		var tasks []map[string]any
 		if err := json.Unmarshal(result, &tasks); err != nil {
 			continue
 		}
@@ -647,7 +647,7 @@ func runList() error {
 
 func runPause(gid string) error {
 	client := newRPCClient(rpcAddr, rpcToken)
-	if _, err := client.call("aria2.pause", []interface{}{gid}); err != nil {
+	if _, err := client.call("aria2.pause", []any{gid}); err != nil {
 		return err
 	}
 	fmt.Printf("已暂停任务: %s\n", gid)
@@ -656,7 +656,7 @@ func runPause(gid string) error {
 
 func runResume(gid string) error {
 	client := newRPCClient(rpcAddr, rpcToken)
-	if _, err := client.call("aria2.unpause", []interface{}{gid}); err != nil {
+	if _, err := client.call("aria2.unpause", []any{gid}); err != nil {
 		return err
 	}
 	fmt.Printf("已恢复任务: %s\n", gid)
@@ -665,7 +665,7 @@ func runResume(gid string) error {
 
 func runRemove(gid string) error {
 	client := newRPCClient(rpcAddr, rpcToken)
-	if _, err := client.call("aria2.remove", []interface{}{gid}); err != nil {
+	if _, err := client.call("aria2.remove", []any{gid}); err != nil {
 		return err
 	}
 	fmt.Printf("已删除任务: %s\n", gid)
@@ -674,11 +674,11 @@ func runRemove(gid string) error {
 
 func runStatus() error {
 	client := newRPCClient(rpcAddr, rpcToken)
-	result, err := client.call("aria2.getGlobalStat", []interface{}{})
+	result, err := client.call("aria2.getGlobalStat", []any{})
 	if err != nil {
 		return err
 	}
-	var stat map[string]interface{}
+	var stat map[string]any
 	if err := json.Unmarshal(result, &stat); err != nil {
 		return fmt.Errorf("意外的响应: %s", string(result))
 	}
@@ -691,7 +691,7 @@ func runStatus() error {
 	return nil
 }
 
-func toString(v interface{}) string {
+func toString(v any) string {
 	if v == nil {
 		return ""
 	}

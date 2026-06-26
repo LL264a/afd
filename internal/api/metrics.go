@@ -241,7 +241,7 @@ func NormalizeEndpoint(path string) string {
 }
 
 func splitPath(p string) []string {
-	out := []string{}
+	out := make([]string, 0, strings.Count(p, "/")+1)
 	start := 0
 	for i := 0; i < len(p); i++ {
 		if p[i] == '/' {

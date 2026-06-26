@@ -25,6 +25,7 @@ type SFTPDownloader struct {
 	outputPath    string
 	client        *sftp.Client
 	sshClient     *ssh.Client
+	sshAgent      net.Conn // SSH agent 连接，随 Close 一起释放
 	logger        *zap.SugaredLogger
 	downloaded    int64
 	speed         int64
@@ -115,7 +116,7 @@ func (d *SFTPDownloader) connect() error {
 	}
 
 	if sshAgent, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK")); err == nil {
-		defer sshAgent.Close()
+		d.sshAgent = sshAgent // 保存到结构体，随 Close 一起释放
 		agent := agent.NewClient(sshAgent)
 		authMethods = append(authMethods, ssh.PublicKeysCallback(agent.Signers))
 	}
@@ -203,7 +204,17 @@ func (d *SFTPDownloader) GetRetryConfig() RetryConfig            { return d.retr
 func (d *SFTPDownloader) LoadProgress(ctx context.Context) error { return nil }
 func (d *SFTPDownloader) SaveProgress() error                    { return nil }
 
+// Close 释放 SFTPDownloader 持有的底层资源，包括 SSH agent 连接。
+func (d *SFTPDownloader) Close() error {
+	if d.sshAgent != nil {
+		d.sshAgent.Close()
+		d.sshAgent = nil
+	}
+	return nil
+}
+
 func (d *SFTPDownloader) Download(ctx context.Context) error {
+	defer d.Close() // 确保 sshAgent 在所有退出路径上被释放
 	if err := d.connect(); err != nil {
 		return err
 	}

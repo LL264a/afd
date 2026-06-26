@@ -197,7 +197,7 @@ type DownloaderInterface interface {
 	SetURL(url string)
 	SetOutputPath(path string)
 	SetControlFilePath(path string)
-	SetControlFile(cf interface{})
+	SetControlFile(cf any)
 	URL() string
 	OutputPath() string
 	FileSize() int64
@@ -269,7 +269,7 @@ func NewDownloaderFromURL(url, outputPath string, cfg *config.DownloadConfig, lo
 func (d *Downloader) SetURL(rawURL string) {
 	d.url = rawURL
 	if err := d.loadCookies(); err != nil {
-		d.logger.Warnw("load cookies failed", "error", err)
+		d.logger.Debugw("load cookies failed", "error", err)
 	}
 	// 从 netrc 获取凭证（仅当未显式配置 HTTP 凭证时）
 	if d.netrc != nil && d.cfg.HTTPUsername == "" {
@@ -290,7 +290,7 @@ func (d *Downloader) SetControlFilePath(path string) {
 	d.controlFilePath = path
 }
 
-func (d *Downloader) SetControlFile(cf interface{}) {
+func (d *Downloader) SetControlFile(cf any) {
 	d.cfMu.Lock()
 	defer d.cfMu.Unlock()
 	if cf == nil {
@@ -314,7 +314,7 @@ func (d *Downloader) LoadProgress(ctx context.Context) error {
 
 	cf, err := store.Load(taskID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, task.ErrControlFileNotFound) {
 			return nil
 		}
 		return fmt.Errorf("load control file: %w", err)
@@ -873,7 +873,7 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 	if d.controlFilePath != "" && !d.conditionalGet {
 		store := task.NewControlFileStore(filepath.Dir(d.controlFilePath))
 		taskID := strings.TrimSuffix(filepath.Base(d.controlFilePath), filepath.Ext(d.controlFilePath))
-		if err := store.Delete(taskID); err != nil && !strings.Contains(err.Error(), "not found") {
+		if err := store.Delete(taskID); err != nil && !errors.Is(err, task.ErrControlFileNotFound) {
 			d.logger.Warnw("failed to remove control file", "path", d.controlFilePath, "error", err)
 		}
 	}
@@ -1157,7 +1157,7 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 			return fmt.Errorf("create request: %w", err)
 		}
 
-		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", blockOffset, rangeEnd))
+		req.Header.Set("Range", "bytes="+strconv.FormatInt(blockOffset, 10)+"-"+strconv.FormatInt(rangeEnd, 10))
 
 		resp, err := d.client.Do(req)
 		if err != nil {
@@ -1394,7 +1394,7 @@ func (d *Downloader) downloadRangeOnceFromURL(ctx context.Context, file *os.File
 		return fmt.Errorf("create request: %w", err)
 	}
 
-	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+	req.Header.Set("Range", "bytes="+strconv.FormatInt(start, 10)+"-"+strconv.FormatInt(end, 10))
 
 	resp, err := d.client.Do(req)
 	if err != nil {
@@ -1684,7 +1684,7 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 	if d.controlFilePath != "" && !d.conditionalGet {
 		store := task.NewControlFileStore(filepath.Dir(d.controlFilePath))
 		taskID := strings.TrimSuffix(filepath.Base(d.controlFilePath), filepath.Ext(d.controlFilePath))
-		if err := store.Delete(taskID); err != nil && !strings.Contains(err.Error(), "not found") {
+		if err := store.Delete(taskID); err != nil && !errors.Is(err, task.ErrControlFileNotFound) {
 			d.logger.Warnw("failed to remove control file", "path", d.controlFilePath, "error", err)
 		}
 	}
@@ -1704,7 +1704,7 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 		return err
 	}
 
-	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingSize))
+	req.Header.Set("Range", "bytes="+strconv.FormatInt(existingSize, 10)+"-")
 
 	resp, err := d.client.Do(req)
 	if err != nil {
@@ -1795,7 +1795,7 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 	if d.controlFilePath != "" && !d.conditionalGet {
 		store := task.NewControlFileStore(filepath.Dir(d.controlFilePath))
 		taskID := strings.TrimSuffix(filepath.Base(d.controlFilePath), filepath.Ext(d.controlFilePath))
-		if err := store.Delete(taskID); err != nil && !strings.Contains(err.Error(), "not found") {
+		if err := store.Delete(taskID); err != nil && !errors.Is(err, task.ErrControlFileNotFound) {
 			d.logger.Warnw("failed to remove control file", "path", d.controlFilePath, "error", err)
 		}
 	}

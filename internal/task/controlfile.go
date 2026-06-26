@@ -149,7 +149,7 @@ func (s *ControlFileStore) Load(taskID string) (*ControlFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("control file for task %s not found", taskID)
+			return nil, fmt.Errorf("control file for task %s: %w", taskID, ErrControlFileNotFound)
 		}
 		return nil, fmt.Errorf("failed to read control file for task %s: %w", taskID, err)
 	}
@@ -169,7 +169,7 @@ func (s *ControlFileStore) Delete(taskID string) error {
 	path := s.filePath(taskID)
 	if err := os.Remove(path); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("control file for task %s not found", taskID)
+			return fmt.Errorf("control file for task %s: %w", taskID, ErrControlFileNotFound)
 		}
 		return fmt.Errorf("failed to delete control file for task %s: %w", taskID, err)
 	}

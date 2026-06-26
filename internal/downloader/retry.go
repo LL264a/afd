@@ -67,7 +67,6 @@ func IsRetryableError(err error) bool {
 	errLower := strings.ToLower(errStr)
 
 	if strings.Contains(errLower, "timeout") ||
-		strings.Contains(errLower, "i/o timeout") ||
 		strings.Contains(errLower, "context deadline exceeded") {
 		return true
 	}

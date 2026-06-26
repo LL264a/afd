@@ -100,7 +100,7 @@ func (q *TaskQueue) Remove(id string) error {
 	task, exists := q.tasks[id]
 	if !exists {
 		q.mu.Unlock()
-		return fmt.Errorf("task %s not found", id)
+		return fmt.Errorf("task %s: %w", id, ErrTaskNotFound)
 	}
 
 	wasActive := task.GetStatus() == StatusDownloading
@@ -138,7 +138,7 @@ func (q *TaskQueue) Pause(id string) error {
 	task, exists := q.tasks[id]
 	if !exists {
 		q.mu.Unlock()
-		return fmt.Errorf("task %s not found", id)
+		return fmt.Errorf("task %s: %w", id, ErrTaskNotFound)
 	}
 
 	if task.GetStatus() != StatusDownloading {
@@ -159,7 +159,7 @@ func (q *TaskQueue) Resume(id string) error {
 	task, exists := q.tasks[id]
 	if !exists {
 		q.mu.Unlock()
-		return fmt.Errorf("task %s not found", id)
+		return fmt.Errorf("task %s: %w", id, ErrTaskNotFound)
 	}
 
 	if task.GetStatus() != StatusPaused {
@@ -194,7 +194,7 @@ func (q *TaskQueue) Get(id string) (*Task, error) {
 
 	task, exists := q.tasks[id]
 	if !exists {
-		return nil, fmt.Errorf("task %s not found", id)
+		return nil, fmt.Errorf("task %s: %w", id, ErrTaskNotFound)
 	}
 
 	return task, nil
@@ -355,7 +355,7 @@ func (q *TaskQueue) RemoveStopped(id string) error {
 	defer q.mu.Unlock()
 	task, exists := q.tasks[id]
 	if !exists {
-		return fmt.Errorf("task %s not found", id)
+		return fmt.Errorf("task %s: %w", id, ErrTaskNotFound)
 	}
 	st := task.GetStatus()
 	if st == StatusDownloading || st == StatusPending {
@@ -388,7 +388,7 @@ func (q *TaskQueue) ChangePosition(id string, pos int, how string) (int, error) 
 	defer q.mu.Unlock()
 	task, exists := q.tasks[id]
 	if !exists {
-		return 0, fmt.Errorf("task %s not found", id)
+		return 0, fmt.Errorf("task %s: %w", id, ErrTaskNotFound)
 	}
 	if task.GetStatus() != StatusPending {
 		return 0, fmt.Errorf("task %s is not in waiting queue", id)

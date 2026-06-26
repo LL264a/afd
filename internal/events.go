@@ -29,7 +29,7 @@ const (
 type Event struct {
 	Type      EventType              `json:"type"`
 	TaskID    string                 `json:"task_id"`
-	Data      map[string]interface{} `json:"data"`
+	Data      map[string]any `json:"data"`
 	Timestamp time.Time              `json:"timestamp"`
 }
 
@@ -287,7 +287,7 @@ func (e *EventEmitter) Emit(event *Event) {
 	}
 }
 
-func (e *EventEmitter) EmitTaskStarted(taskID string, data map[string]interface{}) {
+func (e *EventEmitter) EmitTaskStarted(taskID string, data map[string]any) {
 	e.Emit(&Event{
 		Type:      EventTaskStarted,
 		TaskID:    taskID,
@@ -296,7 +296,7 @@ func (e *EventEmitter) EmitTaskStarted(taskID string, data map[string]interface{
 	})
 }
 
-func (e *EventEmitter) EmitTaskPaused(taskID string, data map[string]interface{}) {
+func (e *EventEmitter) EmitTaskPaused(taskID string, data map[string]any) {
 	e.Emit(&Event{
 		Type:      EventTaskPaused,
 		TaskID:    taskID,
@@ -305,7 +305,7 @@ func (e *EventEmitter) EmitTaskPaused(taskID string, data map[string]interface{}
 	})
 }
 
-func (e *EventEmitter) EmitTaskResumed(taskID string, data map[string]interface{}) {
+func (e *EventEmitter) EmitTaskResumed(taskID string, data map[string]any) {
 	e.Emit(&Event{
 		Type:      EventTaskResumed,
 		TaskID:    taskID,
@@ -314,7 +314,7 @@ func (e *EventEmitter) EmitTaskResumed(taskID string, data map[string]interface{
 	})
 }
 
-func (e *EventEmitter) EmitTaskCompleted(taskID string, data map[string]interface{}) {
+func (e *EventEmitter) EmitTaskCompleted(taskID string, data map[string]any) {
 	e.Emit(&Event{
 		Type:      EventTaskCompleted,
 		TaskID:    taskID,
@@ -323,7 +323,7 @@ func (e *EventEmitter) EmitTaskCompleted(taskID string, data map[string]interfac
 	})
 }
 
-func (e *EventEmitter) EmitTaskFailed(taskID string, data map[string]interface{}) {
+func (e *EventEmitter) EmitTaskFailed(taskID string, data map[string]any) {
 	e.Emit(&Event{
 		Type:      EventTaskFailed,
 		TaskID:    taskID,
@@ -332,7 +332,7 @@ func (e *EventEmitter) EmitTaskFailed(taskID string, data map[string]interface{}
 	})
 }
 
-func (e *EventEmitter) EmitTaskProgress(taskID string, data map[string]interface{}) {
+func (e *EventEmitter) EmitTaskProgress(taskID string, data map[string]any) {
 	e.Emit(&Event{
 		Type:      EventTaskProgress,
 		TaskID:    taskID,
@@ -341,7 +341,7 @@ func (e *EventEmitter) EmitTaskProgress(taskID string, data map[string]interface
 	})
 }
 
-func (e *EventEmitter) EmitDownloadSpeedChanged(taskID string, data map[string]interface{}) {
+func (e *EventEmitter) EmitDownloadSpeedChanged(taskID string, data map[string]any) {
 	e.Emit(&Event{
 		Type:      EventDownloadSpeedChanged,
 		TaskID:    taskID,
