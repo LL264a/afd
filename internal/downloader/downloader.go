@@ -29,6 +29,12 @@ import (
 // errNotModified 表示服务器返回 304 Not Modified，文件未修改
 var errNotModified = errors.New("resource not modified")
 
+const (
+	defaultFileMode os.FileMode = 0644
+	defaultDirMode  os.FileMode = 0755
+	userAgent       = "AFD/0.3"
+)
+
 type Downloader struct {
 	cfg               *config.DownloadConfig
 	retryConfig       RetryConfig
@@ -54,8 +60,6 @@ type Downloader struct {
 	swHead      int
 	swCount     int
 	swMu        sync.Mutex
-
-	chunkMu sync.Mutex
 
 	totalDownloaded int64
 	fileSize        int64
@@ -1728,7 +1732,7 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	file, err := os.OpenFile(d.outputPath, os.O_CREATE|os.O_RDWR, 0644)
+	file, err := os.OpenFile(d.outputPath, os.O_CREATE|os.O_RDWR, defaultFileMode)
 	if err != nil {
 		return err
 	}

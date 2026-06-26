@@ -8,19 +8,23 @@ import (
 	"path/filepath"
 	"plugin"
 	"sync"
-	"time"
 
 	"github.com/nexus-dl/afd/pkg/logger"
 )
 
+// Registry stores builtin plugin factories and discovered plugin instances,
+// providing lookup and lifecycle operations for both.
 type Registry struct {
 	mu         sync.RWMutex
 	builtin    map[string]PluginFactory
 	discovered map[string]Plugin
 }
 
+// PluginFactory is a constructor function that returns a new Plugin instance.
 type PluginFactory func() Plugin
 
+// NewRegistry creates and returns a new Registry with empty builtin and
+// discovered plugin maps.
 func NewRegistry() *Registry {
 	return &Registry{
 		builtin:    make(map[string]PluginFactory),
@@ -28,6 +32,7 @@ func NewRegistry() *Registry {
 	}
 }
 
+// RegisterBuiltin registers a builtin plugin factory under the given name.
 func (r *Registry) RegisterBuiltin(name string, factory PluginFactory) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -35,6 +40,8 @@ func (r *Registry) RegisterBuiltin(name string, factory PluginFactory) {
 	logger.Log.Infof("Registered builtin plugin factory: %s", name)
 }
 
+// GetBuiltin returns the builtin plugin factory registered under the given name
+// and whether it was found.
 func (r *Registry) GetBuiltin(name string) (PluginFactory, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -42,6 +49,7 @@ func (r *Registry) GetBuiltin(name string) (PluginFactory, bool) {
 	return factory, ok
 }
 
+// ListBuiltin returns the names of all registered builtin plugin factories.
 func (r *Registry) ListBuiltin() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -71,7 +79,7 @@ func (r *Registry) LoadFromFile(path string) (Plugin, error) {
 	}
 
 	// 为插件初始化添加超时，避免恶意或异常插件在 Init 中无限阻塞。
-	initCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	initCtx, cancel := context.WithTimeout(context.Background(), pluginInitTimeout)
 	defer cancel()
 	if err := p.Init(initCtx); err != nil {
 		return nil, fmt.Errorf("failed to initialize plugin: %w", err)
@@ -80,6 +88,8 @@ func (r *Registry) LoadFromFile(path string) (Plugin, error) {
 	return p, nil
 }
 
+// DiscoverFromDir scans dir for shared library plugin files (.so/.dll/.dylib),
+// loads each one and stores the resulting plugins under their reported names.
 func (r *Registry) DiscoverFromDir(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -115,6 +125,8 @@ func (r *Registry) DiscoverFromDir(dir string) error {
 	return nil
 }
 
+// DiscoverFromFS walks the given filesystem and logs entries whose names match
+// the supplied glob pattern as candidate plugins.
 func (r *Registry) DiscoverFromFS(fsys fs.FS, pattern string) error {
 	readDirFS, ok := fsys.(fs.ReadDirFS)
 	if !ok {
@@ -145,6 +157,8 @@ func (r *Registry) DiscoverFromFS(fsys fs.FS, pattern string) error {
 	return nil
 }
 
+// LoadBuiltin instantiates and initializes the builtin plugin identified by
+// name via its factory, then stores it among the discovered plugins.
 func (r *Registry) LoadBuiltin(name string) (Plugin, error) {
 	r.mu.RLock()
 	factory, ok := r.builtin[name]
@@ -156,7 +170,7 @@ func (r *Registry) LoadBuiltin(name string) (Plugin, error) {
 
 	plugin := factory()
 	// 为插件初始化添加超时，避免恶意或异常插件在 Init 中无限阻塞。
-	initCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	initCtx, cancel := context.WithTimeout(context.Background(), pluginInitTimeout)
 	defer cancel()
 	if err := plugin.Init(initCtx); err != nil {
 		return nil, fmt.Errorf("failed to initialize plugin: %w", err)
@@ -170,6 +184,8 @@ func (r *Registry) LoadBuiltin(name string) (Plugin, error) {
 	return plugin, nil
 }
 
+// GetDiscovered returns the discovered (loaded) plugin with the given name and
+// whether it was found.
 func (r *Registry) GetDiscovered(name string) (Plugin, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -177,6 +193,7 @@ func (r *Registry) GetDiscovered(name string) (Plugin, bool) {
 	return p, ok
 }
 
+// ListDiscovered returns a slice of all currently discovered (loaded) plugins.
 func (r *Registry) ListDiscovered() []Plugin {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -188,6 +205,8 @@ func (r *Registry) ListDiscovered() []Plugin {
 	return result
 }
 
+// Unload closes (if supported) and removes the discovered plugin with the
+// given name, returning an error if it is not loaded.
 func (r *Registry) Unload(name string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -210,18 +229,22 @@ func (r *Registry) Unload(name string) error {
 
 var defaultRegistry = NewRegistry()
 
+// DefaultRegistry returns the package-level shared Registry instance.
 func DefaultRegistry() *Registry {
 	return defaultRegistry
 }
 
+// RegisterBuiltinPlugin registers a builtin plugin factory on the default registry.
 func RegisterBuiltinPlugin(name string, factory PluginFactory) {
 	defaultRegistry.RegisterBuiltin(name, factory)
 }
 
+// LoadBuiltinPlugin loads the named builtin plugin via the default registry.
 func LoadBuiltinPlugin(name string) (Plugin, error) {
 	return defaultRegistry.LoadBuiltin(name)
 }
 
+// DiscoverPlugins scans dir for plugin shared libraries using the default registry.
 func DiscoverPlugins(dir string) error {
 	return defaultRegistry.DiscoverFromDir(dir)
 }

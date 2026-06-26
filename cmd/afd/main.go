@@ -358,7 +358,9 @@ func doBatchDownload(inputFile string) error {
 
 	lines := strings.Split(string(data), "\n")
 	urls := []string{}
+	outNames := []string{}
 	currentDir := dir
+	var pendingOut string
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -372,7 +374,8 @@ func doBatchDownload(inputFile string) error {
 			continue
 		}
 		if strings.HasPrefix(line, "out=") {
-			continue // TODO: 处理输出文件名
+			pendingOut = strings.TrimPrefix(line, "out=")
+			continue
 		}
 		if strings.HasPrefix(line, "http://") ||
 			strings.HasPrefix(line, "https://") ||
@@ -380,6 +383,8 @@ func doBatchDownload(inputFile string) error {
 			strings.HasPrefix(line, "magnet:") ||
 			strings.HasPrefix(line, "file://") {
 			urls = append(urls, line)
+			outNames = append(outNames, pendingOut)
+			pendingOut = ""
 		}
 	}
 
@@ -399,6 +404,9 @@ func doBatchDownload(inputFile string) error {
 		fmt.Printf("\n[%d/%d] %s\n", i+1, len(urls), url)
 
 		outPath := filepath.Base(url)
+		if i < len(outNames) && outNames[i] != "" {
+			outPath = outNames[i]
+		}
 		if currentDir != "" {
 			outPath = filepath.Join(currentDir, outPath)
 		}
