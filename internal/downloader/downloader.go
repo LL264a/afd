@@ -1901,13 +1901,22 @@ func (d *Downloader) saveCookies() error {
 	}
 
 	path := d.getCookieFilePath()
-	file, err := os.Create(path)
+	tmpPath := path + ".tmp"
+
+	file, err := os.Create(tmpPath)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
 
 	if err := gob.NewEncoder(file).Encode(cookies); err != nil {
+		file.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	file.Close()
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
 		return err
 	}
 
@@ -1941,7 +1950,10 @@ func (d *Downloader) SetInsecure(insecure bool) {
 	d.cfg.Insecure = insecure
 	if insecure {
 		if transport, ok := d.client.Transport.(*http.Transport); ok {
-			transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+			transport.TLSClientConfig = &tls.Config{
+				InsecureSkipVerify: true,
+				MinVersion:         tls.VersionTLS12,
+			}
 		}
 	}
 }

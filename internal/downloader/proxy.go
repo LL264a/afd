@@ -171,6 +171,16 @@ func NewHTTPProxyClient(proxyCfg *config.ProxyConfig, timeout time.Duration, use
 
 	var transport http.RoundTripper = &http.Transport{
 		Proxy: http.ProxyURL(proxyURL),
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
 	}
 
 	if proxyCfg.Username != "" && proxyCfg.Password != "" {
@@ -207,6 +217,12 @@ func CreateSOCKS5ProxyClient(proxyCfg *config.ProxyConfig, timeout time.Duration
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return dialer.Dial(network, addr)
 		},
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
 	}
 
 	return &http.Client{
@@ -233,6 +249,12 @@ func CreateSOCKS4ProxyClient(proxyCfg *config.ProxyConfig, timeout time.Duration
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return dialer.Dial(network, addr)
 		},
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
 	}
 
 	return &http.Client{

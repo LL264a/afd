@@ -150,6 +150,9 @@ func (p *Piece) StealableRange(minSize int64) (offset int64, length int64) {
 
 	offset = p.Start + int64(stealStartBlock)*p.blocks.blockLength
 	length = p.Length - (int64(stealStartBlock) * p.blocks.blockLength)
+	if length < 0 {
+		return -1, 0 // 防御性检查
+	}
 	if length < minSize {
 		return -1, 0
 	}

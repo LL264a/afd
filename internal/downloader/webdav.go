@@ -60,7 +60,10 @@ func NewWebDAVDownloader(urlStr, outputPath string, cfg *config.DownloadConfig, 
 		Timeout:   cfg.Timeout,
 	}
 
-	parsedURL, _ := url.Parse(urlStr)
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid URL: %w", err)
+	}
 	user := ""
 	password := ""
 
@@ -132,7 +135,13 @@ func (d *WebDAVDownloader) SetURL(urlStr string) {
 	d.host = host
 	d.path = path
 
-	parsedURL, _ := url.Parse(urlStr)
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		if d.logger != nil {
+			d.logger.Warnw("invalid WebDAV URL in SetURL, skipping credentials update", "url", urlStr, "err", err)
+		}
+		return
+	}
 	if parsedURL != nil {
 		d.user = parsedURL.User.Username()
 		if pw, ok := parsedURL.User.Password(); ok {
@@ -463,7 +472,10 @@ func (h *WebDAVProtocolHandler) GetFileInfo(urlStr string) (int64, error) {
 		Timeout:   h.cfg.Timeout,
 	}
 
-	parsedURL, _ := url.Parse(urlStr)
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid URL: %w", err)
+	}
 	user := ""
 	password := ""
 

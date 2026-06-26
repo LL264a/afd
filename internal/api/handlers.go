@@ -204,7 +204,8 @@ func (h *TaskHandler) ResumeTask(w http.ResponseWriter, r *http.Request, id stri
 
 	t, err := h.taskQueue.Get(id)
 	if err != nil {
-		sendError(w, http.StatusInternalServerError, "Failed to get task after resume", err.Error())
+		logger.Log.Errorw("failed to get task after resume", "error", err)
+		sendError(w, http.StatusInternalServerError, "Failed to get task after resume", "")
 		return
 	}
 	h.hub.BroadcastTaskUpdate(t)

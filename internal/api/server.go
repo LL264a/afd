@@ -33,6 +33,7 @@ type Server struct {
 	rateLimitStop func()
 	stopCh        chan struct{}
 	stopOnce      sync.Once
+	wg            sync.WaitGroup
 }
 
 func (s *Server) Handler() http.Handler {
@@ -548,7 +549,11 @@ func (s *Server) Start() error {
 
 	// 启动定时自动保存会话
 	if s.config != nil && s.config.AutoSaveInterval > 0 {
-		go s.autoSaveLoop(s.config.AutoSaveInterval)
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.autoSaveLoop(s.config.AutoSaveInterval)
+		}()
 	}
 
 	return s.ListenAndServe()
@@ -573,11 +578,11 @@ func (s *Server) Stop() error {
 	logger.Log.Info("Stopping API server")
 	s.stopOnce.Do(func() {
 		close(s.stopCh)
+		if s.rateLimitStop != nil {
+			s.rateLimitStop()
+		}
 	})
-	if s.rateLimitStop != nil {
-		s.rateLimitStop()
-		s.rateLimitStop = nil
-	}
+	s.wg.Wait()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return s.Shutdown(ctx)

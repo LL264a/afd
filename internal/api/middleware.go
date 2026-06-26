@@ -166,6 +166,8 @@ type rateLimiter struct {
 	limit    int
 	window   time.Duration
 	done     chan struct{}
+	stopOnce sync.Once
+	wg       sync.WaitGroup
 }
 
 type requestWindow struct {
@@ -180,7 +182,11 @@ func newRateLimiter(limit int, window time.Duration) *rateLimiter {
 		window:   window,
 		done:     make(chan struct{}),
 	}
-	go rl.cleanup()
+	rl.wg.Add(1)
+	go func() {
+		defer rl.wg.Done()
+		rl.cleanup()
+	}()
 	return rl
 }
 
@@ -205,7 +211,10 @@ func (rl *rateLimiter) cleanup() {
 }
 
 func (rl *rateLimiter) stop() {
-	close(rl.done)
+	rl.stopOnce.Do(func() {
+		close(rl.done)
+	})
+	rl.wg.Wait()
 }
 
 func (rl *rateLimiter) allow(ip string) bool {

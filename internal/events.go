@@ -54,22 +54,29 @@ func NewHTTPHandler(url string, headers map[string]string) *HTTPHandler {
 }
 
 func (h *HTTPHandler) HandleEvent(event *Event) error {
+	// 持锁拷贝 headers 和 URL，避免持锁执行网络请求阻塞所有事件
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	headers := make(map[string]string, len(h.Headers))
+	for k, v := range h.Headers {
+		headers[k] = v
+	}
+	url := h.URL
+	h.mu.Unlock()
 
+	// 锁外执行网络请求
 	body, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, h.URL, bytes.NewBuffer(body))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	for key, value := range h.Headers {
-		req.Header.Set(key, value)
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	resp, err := h.Client.Do(req)
@@ -197,6 +204,7 @@ type EventEmitter struct {
 	eventQueue  chan *Event
 	workerCount int
 	done        chan struct{}
+	closeOnce   sync.Once
 	wg          sync.WaitGroup
 	mu          sync.RWMutex
 }
@@ -224,13 +232,10 @@ func (e *EventEmitter) startWorkers() {
 			defer e.wg.Done()
 			for {
 				select {
-				case event, ok := <-e.eventQueue:
-					if !ok {
-						return
-					}
-					e.processEvent(event)
 				case <-e.done:
 					return
+				case event := <-e.eventQueue:
+					e.processEvent(event)
 				}
 			}
 		}()
@@ -275,6 +280,8 @@ func (e *EventEmitter) Unsubscribe(handler EventHandler) {
 func (e *EventEmitter) Emit(event *Event) {
 	if e.async {
 		select {
+		case <-e.done:
+			return // 已关闭，直接返回
 		case e.eventQueue <- event:
 		default:
 			logger.Log.Warnw("event queue full, dropping event",
@@ -283,6 +290,12 @@ func (e *EventEmitter) Emit(event *Event) {
 			)
 		}
 	} else {
+		// 同步模式
+		select {
+		case <-e.done:
+			return
+		default:
+		}
 		e.processEvent(event)
 	}
 }
@@ -351,8 +364,9 @@ func (e *EventEmitter) EmitDownloadSpeedChanged(taskID string, data map[string]a
 }
 
 func (e *EventEmitter) Close() error {
-	close(e.done)
-	close(e.eventQueue)
+	e.closeOnce.Do(func() {
+		close(e.done)
+	})
 	e.wg.Wait()
 
 	e.mu.Lock()

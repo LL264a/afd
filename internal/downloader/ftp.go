@@ -89,6 +89,7 @@ func (c *FTPClient) Connect() error {
 		tlsConfig := &tls.Config{
 			ServerName:         c.host,
 			InsecureSkipVerify: false,
+			MinVersion:         tls.VersionTLS12,
 		}
 		c.tlsConn, err = tls.Dial("tcp", addr, tlsConfig)
 		if err != nil {
@@ -344,6 +345,7 @@ func (c *FTPClient) retrActive(path string, offset int64) (net.Conn, error) {
 		tlsConfig := &tls.Config{
 			ServerName:         c.host,
 			InsecureSkipVerify: false,
+			MinVersion:         tls.VersionTLS12,
 		}
 		dataConn = tls.Client(dataConn, tlsConfig)
 		c.dataTlsConn = dataConn.(*tls.Conn)
