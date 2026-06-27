@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,20 +23,23 @@ type activeDownload struct {
 	done          chan struct{}
 	lowSpeedSince time.Time
 	startTime     time.Time
+	downloader    DownloaderInterface
 }
 
 type DownloadManager struct {
-	mu            sync.RWMutex
-	taskQueue     *task.TaskQueue
-	taskStore     *task.TaskStore
-	hub           *api.WebSocketHub
-	downloadCfg   *config.DownloadConfig
-	active        map[string]*activeDownload
-	stopCh        chan struct{}
-	stopOnce      sync.Once
-	wg            sync.WaitGroup
-	eventEmitter  *internal.EventEmitter
-	postProcessor *internal.PostProcessor
+	mu               sync.RWMutex
+	taskQueue        *task.TaskQueue
+	taskStore        *task.TaskStore
+	hub              *api.WebSocketHub
+	downloadCfg      *config.DownloadConfig
+	active           map[string]*activeDownload
+	stopCh           chan struct{}
+	stopOnce         sync.Once
+	wg               sync.WaitGroup
+	eventEmitter     *internal.EventEmitter
+	postProcessor    *internal.PostProcessor
+	speedLimitTicker *time.Ticker
+	speedLimitStop   chan struct{}
 }
 
 func NewDownloadManager(taskQueue *task.TaskQueue, taskStore *task.TaskStore, hub *api.WebSocketHub, downloadCfg *config.DownloadConfig, eventEmitter *internal.EventEmitter, postProcessor *internal.PostProcessor) *DownloadManager {
@@ -82,6 +86,19 @@ func (m *DownloadManager) Start() {
 			}
 		}
 	}()
+
+	// 定时限速调度
+	if len(m.downloadCfg.ScheduleSpeedLimits) > 0 {
+		m.speedLimitStop = make(chan struct{})
+		m.speedLimitTicker = time.NewTicker(60 * time.Second) // 每分钟检查一次
+		m.wg.Add(1)
+		go func() {
+			defer m.wg.Done()
+			m.scheduleSpeedLimitLoop()
+		}()
+		// 启动时立即应用一次，避免首分钟内未触发限速
+		m.applyScheduledSpeedLimit()
+	}
 }
 
 func (m *DownloadManager) Stop() {
@@ -89,6 +106,14 @@ func (m *DownloadManager) Stop() {
 	m.stopOnce.Do(func() {
 		close(m.stopCh)
 	})
+
+	// 停止定时限速调度器
+	if m.speedLimitTicker != nil {
+		m.speedLimitTicker.Stop()
+		if m.speedLimitStop != nil {
+			close(m.speedLimitStop)
+		}
+	}
 
 	m.mu.Lock()
 	for id, dl := range m.active {
@@ -102,6 +127,94 @@ func (m *DownloadManager) Stop() {
 	m.wg.Wait()
 
 	logger.Log.Info("Download manager stopped")
+}
+
+// scheduleSpeedLimitLoop 周期性检查并应用定时限速规则
+func (m *DownloadManager) scheduleSpeedLimitLoop() {
+	for {
+		select {
+		case <-m.speedLimitStop:
+			return
+		case <-m.speedLimitTicker.C:
+			m.applyScheduledSpeedLimit()
+		}
+	}
+}
+
+// applyScheduledSpeedLimit 根据当前时间匹配调度规则并应用限速
+func (m *DownloadManager) applyScheduledSpeedLimit() {
+	now := time.Now()
+	var matchedLimit *int64
+	for i := range m.downloadCfg.ScheduleSpeedLimits {
+		schedule := &m.downloadCfg.ScheduleSpeedLimits[i]
+		if m.isInSchedule(now, schedule) {
+			limit := schedule.Limit
+			matchedLimit = &limit
+			break
+		}
+	}
+
+	// 不在任何调度范围内时，恢复默认限速
+	limit := m.downloadCfg.SpeedLimit
+	if matchedLimit != nil {
+		limit = *matchedLimit
+	}
+
+	m.mu.RLock()
+	for _, ad := range m.active {
+		if ad.downloader != nil {
+			ad.downloader.SetRateLimit(limit)
+		}
+	}
+	m.mu.RUnlock()
+}
+
+// isInSchedule 判断给定时间是否落在调度规则的时间窗口内
+func (m *DownloadManager) isInSchedule(now time.Time, schedule *config.ScheduleSpeedLimit) bool {
+	// 检查星期几（0=Sunday）
+	if schedule.Weekday != nil {
+		if int(now.Weekday()) != *schedule.Weekday {
+			return false
+		}
+	}
+
+	startSec, okStart := parseDaySeconds(schedule.StartTime)
+	endSec, okEnd := parseDaySeconds(schedule.EndTime)
+	if !okStart || !okEnd {
+		return false
+	}
+
+	currentSec := now.Hour()*3600 + now.Minute()*60 + now.Second()
+
+	if startSec <= endSec {
+		return currentSec >= startSec && currentSec <= endSec
+	}
+	// 跨天（如 22:00-06:00）
+	return currentSec >= startSec || currentSec <= endSec
+}
+
+// parseDaySeconds 将 "HH:MM" 或 "HH:MM:SS" 转换为当天从 0 点起的秒数
+func parseDaySeconds(s string) (int, bool) {
+	parts := strings.Split(s, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0, false
+	}
+	h, err := strconv.Atoi(parts[0])
+	if err != nil || h < 0 || h > 23 {
+		return 0, false
+	}
+	min, err := strconv.Atoi(parts[1])
+	if err != nil || min < 0 || min > 59 {
+		return 0, false
+	}
+	sec := 0
+	if len(parts) == 3 {
+		sec, err = strconv.Atoi(parts[2])
+		if err != nil || sec < 0 || sec > 59 {
+			return 0, false
+		}
+	}
+	return h*3600 + min*60 + sec, true
 }
 
 func (m *DownloadManager) StartDownload(t *task.Task) {
@@ -167,6 +280,11 @@ func (m *DownloadManager) StartDownload(t *task.Task) {
 			m.failTask(t.ID, err.Error())
 			return
 		}
+
+		// 记录 downloader 引用，供定时限速调度器使用
+		m.mu.Lock()
+		dl.downloader = d
+		m.mu.Unlock()
 
 		t.SetContext(ctx)
 

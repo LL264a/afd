@@ -13,6 +13,7 @@ require (
 	github.com/pkg/sftp v1.13.6
 	github.com/prometheus/client_golang v1.12.2
 	github.com/spf13/cobra v1.10.2
+	github.com/yeka/zip v0.0.0-20231116150916-03d6312748a9
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.36.0
 	golang.org/x/net v0.34.0

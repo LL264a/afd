@@ -81,9 +81,13 @@ func (d *TorrentDownloader) SetOutputPath(path string) {
 	d.outputPath = path
 }
 
-func (d *TorrentDownloader) SetControlFilePath(path string) {}
+func (d *TorrentDownloader) SetControlFilePath(path string) {
+	// BT 下载通过 anacrolix/torrent 引擎管理进度，不使用控制文件
+}
 
-func (d *TorrentDownloader) SetControlFile(cf interface{}) {}
+func (d *TorrentDownloader) SetControlFile(cf interface{}) {
+	// BT 下载通过 anacrolix/torrent 引擎管理进度，不使用控制文件
+}
 
 func (d *TorrentDownloader) URL() string {
 	return d.url
@@ -94,6 +98,11 @@ func (d *TorrentDownloader) OutputPath() string {
 }
 
 func (d *TorrentDownloader) FileSize() int64 {
+	if d.torrent != nil {
+		if info := d.torrent.Info(); info != nil {
+			return info.TotalLength()
+		}
+	}
 	return 0
 }
 
@@ -149,10 +158,12 @@ func (d *TorrentDownloader) GetRetryConfig() RetryConfig {
 }
 
 func (d *TorrentDownloader) LoadProgress(ctx context.Context) error {
+	// BT 下载由 torrent 引擎自动管理分片进度，无需显式加载
 	return nil
 }
 
 func (d *TorrentDownloader) SaveProgress() error {
+	// BT 下载由 torrent 引擎自动管理分片进度，无需显式保存
 	return nil
 }
 

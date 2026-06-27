@@ -81,6 +81,14 @@ type ScheduleSpeedLimit struct {
 	Weekday   *int   `json:"weekday,omitempty" yaml:"weekday,omitempty"`
 }
 
+// EventsConfig 配置事件系统的外部处理器（Webhook / 命令）。
+type EventsConfig struct {
+	WebhookURL     string            `json:"webhook_url,omitempty" yaml:"webhookUrl,omitempty"`
+	WebhookHeaders map[string]string `json:"webhook_headers,omitempty" yaml:"webhookHeaders,omitempty"`
+	OnCompleteCmd  string            `json:"on_complete_cmd,omitempty" yaml:"onCompleteCmd,omitempty"`
+	OnCompleteArgs []string          `json:"on_complete_args,omitempty" yaml:"onCompleteArgs,omitempty"`
+}
+
 func (c *BTConfig) Validate() error {
 	if c.Port < 0 || c.Port > 65535 {
 		return fmt.Errorf("bt port must be between 0 and 65535")
@@ -282,6 +290,7 @@ type Config struct {
 	API              APIConfig      `json:"api" yaml:"api"`
 	Cluster          ClusterConfig  `json:"cluster" yaml:"cluster"`
 	Download         DownloadConfig `json:"download" yaml:"download"`
+	Events           EventsConfig   `json:"events,omitempty" yaml:"events,omitempty"`
 	AutoSaveInterval int            `json:"auto_save_interval,omitempty" yaml:"auto_save_interval,omitempty"`
 }
 

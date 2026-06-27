@@ -569,6 +569,16 @@ func runServe() error {
 	// 事件系统
 	eventEmitter := internal.NewEventEmitter(true, 4)
 
+	// 注册事件处理器
+	// 如果配置了 webhook URL，注册 HTTPHandler
+	if cfg.Events.WebhookURL != "" {
+		eventEmitter.Subscribe(internal.NewHTTPHandler(cfg.Events.WebhookURL, cfg.Events.WebhookHeaders))
+	}
+	// 如果配置了事件命令，注册 CommandHandler
+	if cfg.Events.OnCompleteCmd != "" {
+		eventEmitter.Subscribe(internal.NewCommandHandler(cfg.Events.OnCompleteCmd, cfg.Events.OnCompleteArgs))
+	}
+
 	// 后处理器
 	postProcessor := internal.NewPostProcessor(cfg.Download.PostProcess)
 
@@ -613,6 +623,7 @@ func runServe() error {
 		logger.Log.Warnw("failed to create cluster auth", "error", err)
 	}
 	rpcServer := cluster.NewRPCServer(rpcSrvAddr, clusterAuth)
+	scheduler.SetClusterAuth(clusterAuth)
 
 	// Failover 回调：节点故障时重新分配任务
 	failover.SetTaskReassignFn(func(taskID, newNodeID string) error {

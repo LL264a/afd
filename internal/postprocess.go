@@ -2,7 +2,6 @@ package internal
 
 import (
 	"archive/tar"
-	"archive/zip"
 	"compress/bzip2"
 	"compress/gzip"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/nexus-dl/afd/pkg/config"
 	"github.com/nexus-dl/afd/pkg/logger"
+	yeka "github.com/yeka/zip"
 )
 
 type PostProcessor struct {
@@ -69,10 +69,10 @@ func (p *PostProcessor) ExtractArchive(archivePath, destDir string) error {
 	}
 }
 
-// extractZip 解压 zip 归档，支持 StripComponents、Overwrite。
-// 注意：标准库 archive/zip 不支持解密加密条目，加密条目将被跳过。
+// extractZip 解压 zip 归档，支持 StripComponents、Overwrite 与加密条目解密。
+// 加密条目通过 ExtractConfig.Password 解密（支持 ZipCrypto 与 WinZip AES）。
 func (p *PostProcessor) extractZip(archivePath, destDir string) error {
-	r, err := zip.OpenReader(archivePath)
+	r, err := yeka.OpenReader(archivePath)
 	if err != nil {
 		return fmt.Errorf("open zip: %w", err)
 	}
@@ -84,6 +84,7 @@ func (p *PostProcessor) extractZip(archivePath, destDir string) error {
 
 	strip := p.config.Extract.StripComponents
 	overwrite := p.config.Extract.Overwrite
+	password := p.config.Extract.Password
 
 	for _, f := range r.File {
 		name := applyStripComponents(f.Name, strip)
@@ -112,6 +113,17 @@ func (p *PostProcessor) extractZip(archivePath, destDir string) error {
 
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			continue
+		}
+
+		if f.IsEncrypted() {
+			if password != "" {
+				f.SetPassword(password)
+			} else {
+				if logger.Log != nil {
+					logger.Log.Warnw("encrypted zip entry without password", "file", f.Name)
+				}
+				continue
+			}
 		}
 
 		rc, err := f.Open()
@@ -312,6 +324,20 @@ func (p *PostProcessor) cleanupFiles(filePath string) {
 			if err := os.Remove(m); err != nil {
 				if logger.Log != nil {
 					logger.Log.Warnw("cleanup failed", "file", m, "error", err)
+				}
+			}
+		}
+	}
+	if p.config.Cleanup.DeleteTempFiles {
+		// 删除下载过程中产生的临时/控制文件（如未完成的分段、断点续传控制文件）
+		tempPatterns := []string{"*.tmp", "*.part", "*.ctl", "*.aria2"}
+		for _, pattern := range tempPatterns {
+			matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+			for _, m := range matches {
+				if err := os.Remove(m); err != nil {
+					if logger.Log != nil {
+						logger.Log.Debugw("failed to remove temp file", "file", m, "error", err)
+					}
 				}
 			}
 		}

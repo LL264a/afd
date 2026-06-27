@@ -25,6 +25,10 @@ type Scheduler struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	startOnce    sync.Once
+
+	auth       *ClusterAuth
+	clientsMu  sync.Mutex
+	rpcClients map[string]*RPCClient
 }
 
 func NewScheduler(localNodeID string, cfg *config.Config) *Scheduler {
@@ -41,6 +45,37 @@ func NewScheduler(localNodeID string, cfg *config.Config) *Scheduler {
 	}
 }
 
+// SetClusterAuth 注入集群鉴权配置，dispatchTask 通过它构造 RPCClient。
+// 必须在 Start 之前调用。
+func (s *Scheduler) SetClusterAuth(auth *ClusterAuth) {
+	s.auth = auth
+}
+
+// getOrCreateClient 按 addr 复用 RPCClient。同一地址变更时会自动新建连接。
+func (s *Scheduler) getOrCreateClient(node *Node) *RPCClient {
+	addr := node.FullAddr()
+	s.clientsMu.Lock()
+	defer s.clientsMu.Unlock()
+	if s.rpcClients == nil {
+		s.rpcClients = make(map[string]*RPCClient)
+	}
+	if c, ok := s.rpcClients[addr]; ok {
+		return c
+	}
+	c := NewRPCClient(addr, s.auth)
+	s.rpcClients[addr] = c
+	return c
+}
+
+func (s *Scheduler) closeClients() {
+	s.clientsMu.Lock()
+	defer s.clientsMu.Unlock()
+	for _, c := range s.rpcClients {
+		c.Close()
+	}
+	s.rpcClients = nil
+}
+
 func (s *Scheduler) Start() {
 	s.wg.Add(1)
 	go s.dispatchLoop()
@@ -50,6 +85,7 @@ func (s *Scheduler) Start() {
 func (s *Scheduler) Stop() {
 	s.cancel()
 	s.wg.Wait()
+	s.closeClients()
 	// 不关闭 dispatchChan，避免 AfterFunc 回调向已关闭 channel 发送导致 panic
 	s.logger.Infof("Scheduler stopped for node %s", s.localNodeID)
 }
@@ -172,9 +208,28 @@ func (s *Scheduler) dispatchTask(t *task.Task) {
 
 	s.logger.Infof("Dispatching task %s to node %s", t.ID, targetNode.ID)
 	t.SetTargetNode(targetNode.ID)
-	// TODO: 实际投递任务到目标节点（需要 gRPC 调用）
-	// 当前仅标记 TargetNode，依赖外部组件轮询
-	s.logger.Warnf("Task %s assigned to node %s but not dispatched (requires external dispatcher)", t.ID, targetNode.ID)
+
+	// 本地节点：无需 RPC 投递，由本地下载管理器处理
+	if targetNode.ID == s.localNodeID {
+		s.logger.Debugw("task assigned to local node", "taskID", t.ID, "nodeID", targetNode.ID)
+		return
+	}
+
+	// 通过 gRPC 投递任务到远端节点
+	client := s.getOrCreateClient(targetNode)
+	req := SubmitTaskRequest{
+		URL:        t.URL,
+		OutputPath: t.OutputPath,
+		NodeID:     targetNode.ID,
+	}
+	var resp SubmitTaskResponse
+	if err := client.Call("SubmitTask", req, &resp); err != nil {
+		s.logger.Errorw("failed to dispatch task to remote node",
+			"taskID", t.ID, "nodeID", targetNode.ID, "addr", targetNode.FullAddr(), "error", err)
+		return
+	}
+	s.logger.Infow("task dispatched to remote node",
+		"taskID", t.ID, "remoteTaskID", resp.TaskID, "nodeID", targetNode.ID)
 }
 
 func (s *Scheduler) selectNode() *Node {
