@@ -11,10 +11,22 @@ import (
 )
 
 var (
-	logMu  sync.Mutex
-	Log    *zap.SugaredLogger
-	closer io.Closer
+	logMu          sync.Mutex
+	Log            *zap.SugaredLogger
+	closer         io.Closer
+	currentLogFile string
 )
+
+// isTerminal reports whether f is connected to a terminal.
+// 非 TTY 环境（如 systemd/journald、日志文件、管道）下不应使用 ANSI 颜色码，
+// 否则日志中会出现乱码转义序列。
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
 
 func Init(level string, logFile string) error {
 	logMu.Lock()
@@ -37,7 +49,11 @@ func Init(level string, logFile string) error {
 	encoderConfig := zap.NewProductionEncoderConfig()
 	encoderConfig.TimeKey = "time"
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	if isTerminal(os.Stderr) {
+		encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	} else {
+		encoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
+	}
 
 	var core zapcore.Core
 	var fileWriter io.Closer
@@ -83,7 +99,17 @@ func Init(level string, logFile string) error {
 
 	Log = newLogger
 	closer = fileWriter
+	currentLogFile = logFile
 	return nil
+}
+
+// SetLevel 热更新日志级别，保留当前日志文件路径。
+// 用于 SIGHUP 等热重载场景，无需重启进程即可调整日志级别。
+func SetLevel(level string) error {
+	logMu.Lock()
+	prevLogFile := currentLogFile
+	logMu.Unlock()
+	return Init(level, prevLogFile)
 }
 
 func Sync() {

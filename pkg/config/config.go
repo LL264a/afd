@@ -590,4 +590,17 @@ func applyEnvOverrides(cfg *Config) {
 			fmt.Fprintf(os.Stderr, "warning: invalid AFD_AUTO_SAVE_INTERVAL: %s\n", v)
 		}
 	}
+	// BT 数据目录
+	if v := os.Getenv("AFD_DOWNLOAD_BT_DATA_DIR"); v != "" {
+		if cfg.Download.BT == nil {
+			cfg.Download.BT = DefaultBTConfig()
+		}
+		cfg.Download.BT.DataDir = v
+	}
+	if v := os.Getenv("AFD_DOWNLOAD_BT_TORRENT_FILES_DIR"); v != "" {
+		if cfg.Download.BT == nil {
+			cfg.Download.BT = DefaultBTConfig()
+		}
+		cfg.Download.BT.TorrentFilesDir = v
+	}
 }

@@ -14,6 +14,7 @@ set -euo pipefail
 REPO="LL264a/afd"
 BINDIR="${BINDIR:-/usr/local/bin}"
 BINARY_NAME="afd"
+INSTALL_SERVICE=false
 
 # Colors
 RED='\033[0;31m'
@@ -31,9 +32,11 @@ success() { echo -e "${GREEN}[OK]${NC} $*"; }
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --bindir) BINDIR="$2"; shift 2 ;;
+        --with-service) INSTALL_SERVICE=true ;;
         -h|--help)
-            echo "Usage: $0 [--bindir DIR]"
-            echo "  --bindir DIR  Installation directory (default: /usr/local/bin)"
+            echo "Usage: $0 [--bindir DIR] [--with-service]"
+            echo "  --bindir DIR       Installation directory (default: /usr/local/bin)"
+            echo "  --with-service     Install systemd service (Linux only)"
             exit 0
             ;;
         *) error "Unknown option: $1" ;;
@@ -44,6 +47,11 @@ done
 detect_platform() {
     OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
     ARCH="$(uname -m)"
+
+    # Windows/MINGW 检测（必须在 case 之前，否则会被 *) 分支拦截成为死代码）
+    if [[ "$OS" == "mingw"* || "$OS" == "msys"* || "$OS" == "cygwin"* ]]; then
+        error "This script is for Unix-like systems. For Windows, please download the .exe from GitHub Releases: https://github.com/${REPO}/releases"
+    fi
 
     case "$OS" in
         linux)  OS="linux" ;;
@@ -59,10 +67,6 @@ detect_platform() {
         i386|i686)     ARCH="386" ;;
         *) error "Unsupported architecture: $ARCH" ;;
     esac
-
-    if [[ "$OS" == "windows"* || "$OS" == "MINGW"* || "$OS" == "MSYS"* ]]; then
-        error "This script is for Unix-like systems. On Windows, download from https://github.com/${REPO}/releases"
-    fi
 }
 
 # Get the latest release tag
@@ -142,6 +146,82 @@ verify_installation() {
     fi
 }
 
+# Install systemd service (optional, Linux only)
+install_systemd_service() {
+    if [[ "$OS" != "linux" ]]; then
+        warn "systemd service installation is only supported on Linux, skipping."
+        return 0
+    fi
+
+    info "Installing systemd service..."
+
+    # 创建用户和组
+    if ! id -u nexus &>/dev/null; then
+        sudo useradd --system --no-create-home --shell /usr/sbin/nologin nexus
+    fi
+
+    # 创建目录
+    sudo mkdir -p /etc/afd /var/lib/afd /var/log/afd
+    sudo chown nexus:nexus /var/lib/afd /var/log/afd
+
+    # 创建默认配置文件（如果不存在）
+    if [[ ! -f /etc/afd/config.yaml ]]; then
+        sudo tee /etc/afd/config.yaml > /dev/null << 'HEREDOC'
+node:
+  id: ""
+  name: "afd-node"
+  data_dir: "/var/lib/afd"
+  log_level: "info"
+api:
+  host: "0.0.0.0"
+  port: 8080
+  auth_token: ""
+download:
+  max_connections: 5
+  speed_limit: 0
+HEREDOC
+        sudo chown nexus:nexus /etc/afd/config.yaml
+        sudo chmod 0640 /etc/afd/config.yaml
+    fi
+
+    # 安装 systemd 服务文件
+    sudo tee /etc/systemd/system/afd.service > /dev/null << 'HEREDOC'
+[Unit]
+Description=AFD Download Manager
+After=network.target
+
+[Service]
+Type=simple
+User=nexus
+Group=nexus
+WorkingDirectory=/var/lib/afd
+ExecStart=/usr/local/bin/afd serve -c /etc/afd/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=afd
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/afd /var/log/afd
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+MemoryDenyWriteExecute=false
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target
+HEREDOC
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable afd
+    success "systemd service installed. Run 'systemctl start afd' to start."
+}
+
 # Main
 main() {
     echo ""
@@ -160,6 +240,10 @@ main() {
     get_latest_version
     install_afd
     verify_installation
+
+    if [[ "$INSTALL_SERVICE" == "true" ]]; then
+        install_systemd_service
+    fi
 }
 
 main

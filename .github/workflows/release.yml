@@ -78,7 +78,7 @@ jobs:
         run: |
           OUTPUT_NAME="afd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
           go build -trimpath \
-            -ldflags="-s -w -X main.Version=${GITHUB_REF_NAME:-dev} -X main.Commit=${GITHUB_SHA::12}" \
+            -ldflags="-s -w -X main.Version=${GITHUB_REF_NAME:-dev} -X main.Commit=${GITHUB_SHA::12} -X main.BuildTime=$(date -u +%FT%TZ)" \
             -o "${OUTPUT_NAME}" \
             ./cmd/afd
 

@@ -36,7 +36,9 @@ RUN addgroup -S nexus && adduser -S nexus -G nexus && \
 USER nexus
 
 ENV AFD_NODE_DATA_DIR=/data \
-    AFD_API_HOST=0.0.0.0
+    AFD_API_HOST=0.0.0.0 \
+    AFD_DOWNLOAD_BT_DATA_DIR=/data/bt-data \
+    AFD_DOWNLOAD_BT_TORRENT_FILES_DIR=/data/torrents
 
 EXPOSE 8080/tcp
 EXPOSE 50051/tcp

@@ -521,9 +521,21 @@ func daemonize() error {
 
 	cmd := exec.Command(os.Args[0], os.Args[1:]...)
 	cmd.Stdin = nil
-	cmd.Stdout = nil
-	cmd.Stderr = nil
 	cmd.Env = append(os.Environ(), "AFD_DAEMONIZED=1")
+
+	// 重定向 daemon 子进程的标准输出/错误到日志文件，避免日志全部丢失。
+	// 子进程通过 FD 继承持有日志文件描述符，父进程退出后子进程仍可写入。
+	logDir := "/var/log/afd"
+	if runtime.GOOS == "windows" {
+		logDir = filepath.Join(os.Getenv("APPDATA"), "afd", "logs")
+	}
+	if err := os.MkdirAll(logDir, 0755); err == nil {
+		if logFile, err := os.OpenFile(filepath.Join(logDir, "afd.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
+			cmd.Stdout = logFile
+			cmd.Stderr = logFile
+		}
+	}
+
 	// Unix: 创建新会话脱离控制终端；Windows: no-op
 	setSysProcAttr(cmd)
 
@@ -658,9 +670,12 @@ func runServe() error {
 				if newCfg, err := config.Load(cfgFile); err != nil {
 					logger.Log.Errorw("failed to reload config", "error", err)
 				} else {
-					logger.Log.Info("configuration reloaded successfully")
+					// 更新日志级别（最常见的热重载需求）
+					if err := logger.SetLevel(newCfg.Node.LogLevel); err == nil {
+						logger.Log.Info("log level updated", "level", newCfg.Node.LogLevel)
+					}
 					cfg = newCfg
-					// TODO: 应用新配置到运行中的组件
+					logger.Log.Info("configuration reloaded (log level applied; other changes require restart)")
 				}
 			case syscall.SIGINT, syscall.SIGTERM:
 				if logger.Log != nil {
