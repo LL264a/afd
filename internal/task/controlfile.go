@@ -3,6 +3,7 @@ package task
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -103,6 +104,19 @@ func (s *ControlFileStore) Save(taskID string, cf *ControlFile) error {
 	}
 
 	dst := s.filePath(taskID)
+	// 跨进程排他锁：使用独立的 .lock 文件，避免锁住目标文件导致 Windows 上 rename 失败
+	lockPath := dst + ".lock"
+	lockFile, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open lock file for task %s: %w", taskID, err)
+	}
+	defer lockFile.Close()
+	defer os.Remove(lockPath)
+	if err := flockFile(lockFile); err != nil {
+		return fmt.Errorf("failed to lock control file for task %s: %w", taskID, err)
+	}
+	defer unflockFile(lockFile)
+
 	tmp, err := os.CreateTemp(dir, filepath.Base(dst)+".*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file for task %s: %w", taskID, err)
@@ -146,11 +160,21 @@ func (s *ControlFileStore) Load(taskID string) (*ControlFile, error) {
 	defer s.mu.RUnlock()
 
 	path := s.filePath(taskID)
-	data, err := os.ReadFile(path)
+	f, err := os.OpenFile(path, os.O_RDONLY, 0644)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("control file for task %s: %w", taskID, ErrControlFileNotFound)
 		}
+		return nil, fmt.Errorf("failed to open control file for task %s: %w", taskID, err)
+	}
+	defer f.Close()
+	if err := flockFile(f); err != nil {
+		return nil, fmt.Errorf("failed to lock control file for task %s: %w", taskID, err)
+	}
+	defer unflockFile(f)
+
+	data, err := io.ReadAll(f)
+	if err != nil {
 		return nil, fmt.Errorf("failed to read control file for task %s: %w", taskID, err)
 	}
 

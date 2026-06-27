@@ -437,7 +437,7 @@ func (c *FTPClient) DownloadFile(remotePath, localPath string, resume bool) erro
 	}
 	defer reader.Close()
 
-	file, err := os.Create(localPath)
+	file, err := os.OpenFile(localPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 	if err != nil {
 		return fmt.Errorf("create local file: %w", err)
 	}
@@ -495,7 +495,7 @@ func (c *FTPClient) DownloadFileRange(remotePath, localPath string, start int64)
 		if err := os.Remove(localPath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove existing file: %w", err)
 		}
-		file, err = os.Create(localPath)
+		file, err = os.OpenFile(localPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 		if err != nil {
 			return fmt.Errorf("create local file: %w", err)
 		}
@@ -754,7 +754,7 @@ func (d *FTPDownloader) Download(ctx context.Context) error {
 			return fmt.Errorf("open output file: %w", err)
 		}
 	} else {
-		file, err = os.Create(d.outputPath)
+		file, err = os.OpenFile(d.outputPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 		if err != nil {
 			return fmt.Errorf("create output file: %w", err)
 		}

@@ -1,4 +1,4 @@
-name: nexus-dl
+name: afd
 
 x-node-common: &node-common
   build:
@@ -7,27 +7,27 @@ x-node-common: &node-common
       VERSION: ${VERSION:-dev}
       COMMIT: ${COMMIT:-unknown}
       BUILD_TIME: ${BUILD_TIME:-unknown}
-  image: nexus-dl:${VERSION:-latest}
+  image: afd:${VERSION:-latest}
   restart: unless-stopped
   volumes:
     - nexus-data:/data
   environment: &node-env
-    NEXUS_NODE_ID: ${NODE_ID:-node-1}
-    NEXUS_NODE_NAME: ${NODE_NAME:-nexus-node}
-    NEXUS_NODE_LOG_LEVEL: ${LOG_LEVEL:-info}
-    NEXUS_NODE_DATA_DIR: /data
-    NEXUS_API_HOST: 0.0.0.0
-    NEXUS_API_PORT: "8080"
-    NEXUS_API_AUTH_TOKEN: ${AUTH_TOKEN:-}
-    NEXUS_API_RATE_LIMIT: "100"
-    NEXUS_CLUSTER_GRPC_PORT: "50051"
-    NEXUS_CLUSTER_DISCOVERY_PORT: "50052"
-    NEXUS_CLUSTER_JOIN_PEERS: ${JOIN_PEERS:-}
+    AFD_NODE_ID: ${NODE_ID:-node-1}
+    AFD_NODE_NAME: ${NODE_NAME:-nexus-node}
+    AFD_NODE_LOG_LEVEL: ${LOG_LEVEL:-info}
+    AFD_NODE_DATA_DIR: /data
+    AFD_API_HOST: 0.0.0.0
+    AFD_API_PORT: "8080"
+    AFD_API_AUTH_TOKEN: ${AUTH_TOKEN:-}
+    AFD_API_RATE_LIMIT: "100"
+    AFD_CLUSTER_GRPC_PORT: "50051"
+    AFD_CLUSTER_DISCOVERY_PORT: "50052"
+    AFD_CLUSTER_JOIN_PEERS: ${JOIN_PEERS:-}
 
 services:
   node-1:
     <<: *node-common
-    container_name: nexus-dl-1
+    container_name: afd-1
     hostname: node-1
     ports:
       - "8080:8080"
@@ -35,12 +35,12 @@ services:
       - "50052:50052/udp"
     environment:
       <<: *node-env
-      NEXUS_NODE_ID: node-1
-      NEXUS_CLUSTER_JOIN_PEERS: ${JOIN_PEERS:-}
+      AFD_NODE_ID: node-1
+      AFD_CLUSTER_JOIN_PEERS: ${JOIN_PEERS:-}
 
   node-2:
     <<: *node-common
-    container_name: nexus-dl-2
+    container_name: afd-2
     hostname: node-2
     depends_on:
       - node-1
@@ -50,15 +50,15 @@ services:
       - "50062:50052/udp"
     environment:
       <<: *node-env
-      NEXUS_NODE_ID: node-2
-      NEXUS_API_PORT: "8080"
-      NEXUS_CLUSTER_GRPC_PORT: "50051"
-      NEXUS_CLUSTER_DISCOVERY_PORT: "50052"
-      NEXUS_CLUSTER_JOIN_PEERS: node-1:50052
+      AFD_NODE_ID: node-2
+      AFD_API_PORT: "8080"
+      AFD_CLUSTER_GRPC_PORT: "50051"
+      AFD_CLUSTER_DISCOVERY_PORT: "50052"
+      AFD_CLUSTER_JOIN_PEERS: node-1:50052
 
   node-3:
     <<: *node-common
-    container_name: nexus-dl-3
+    container_name: afd-3
     hostname: node-3
     depends_on:
       - node-1
@@ -68,11 +68,11 @@ services:
       - "50072:50052/udp"
     environment:
       <<: *node-env
-      NEXUS_NODE_ID: node-3
-      NEXUS_API_PORT: "8080"
-      NEXUS_CLUSTER_GRPC_PORT: "50051"
-      NEXUS_CLUSTER_DISCOVERY_PORT: "50052"
-      NEXUS_CLUSTER_JOIN_PEERS: node-1:50052
+      AFD_NODE_ID: node-3
+      AFD_API_PORT: "8080"
+      AFD_CLUSTER_GRPC_PORT: "50051"
+      AFD_CLUSTER_DISCOVERY_PORT: "50052"
+      AFD_CLUSTER_JOIN_PEERS: node-1:50052
 
 volumes:
   nexus-data:

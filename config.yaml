@@ -1,4 +1,4 @@
-# NexusDL 配置文件
+# AFD 配置文件
 node:
   id: "nexus-node-1"
   name: "nexus-node"

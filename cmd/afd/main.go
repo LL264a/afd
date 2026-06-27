@@ -506,8 +506,8 @@ func (c *rpcClient) call(method string, params []any) (json.RawMessage, error) {
 
 // daemonize 以守护进程方式重新启动自身。
 // Windows 不支持真正的守护进程，提示用户使用 Start-Process 或服务。
-// Unix 上通过重新执行自身并分离标准输入/输出实现；不设置 Setsid 以避免引入 syscall 依赖，
-// 推荐配合 nohup 或 systemd 使用。
+// Unix 上通过重新执行自身、分离标准输入/输出并调用 setsid 创建新会话实现，
+// 确保终端关闭时子进程不会收到 SIGHUP 被杀死。
 func daemonize() error {
 	if runtime.GOOS == "windows" {
 		fmt.Fprintln(os.Stderr, "Daemon mode is not supported on Windows. Use 'Start-Process' or install as a service.")
@@ -524,6 +524,8 @@ func daemonize() error {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Env = append(os.Environ(), "AFD_DAEMONIZED=1")
+	// Unix: 创建新会话脱离控制终端；Windows: no-op
+	setSysProcAttr(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return err
@@ -646,23 +648,38 @@ func runServe() error {
 	})
 
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
-		sig := <-sigCh
-		if logger.Log != nil {
-			logger.Log.Infow("收到信号，正在关闭", "signal", sig)
+		for sig := range sigCh {
+			switch sig {
+			case syscall.SIGHUP:
+				// 热重载配置，不退出进程
+				logger.Log.Info("received SIGHUP, reloading configuration")
+				if newCfg, err := config.Load(cfgFile); err != nil {
+					logger.Log.Errorw("failed to reload config", "error", err)
+				} else {
+					logger.Log.Info("configuration reloaded successfully")
+					cfg = newCfg
+					// TODO: 应用新配置到运行中的组件
+				}
+			case syscall.SIGINT, syscall.SIGTERM:
+				if logger.Log != nil {
+					logger.Log.Infow("收到信号，正在关闭", "signal", sig)
+				}
+				// 先停止 server 接收新请求，再停止下载管理器和事件系统
+				_ = srv.Stop()
+				downloadMgr.Stop()
+				_ = eventEmitter.Close()
+				// 停止集群组件
+				rpcServer.Shutdown()
+				discovery.Shutdown()
+				stateSync.Stop()
+				failover.Stop()
+				scheduler.Stop()
+				_ = natManager.Close()
+				return
+			}
 		}
-		// 先停止 server 接收新请求，再停止下载管理器和事件系统
-		_ = srv.Stop()
-		downloadMgr.Stop()
-		_ = eventEmitter.Close()
-		// 停止集群组件
-		rpcServer.Shutdown()
-		discovery.Shutdown()
-		stateSync.Stop()
-		failover.Stop()
-		scheduler.Stop()
-		_ = natManager.Close()
 	}()
 
 	logger.Log.Infow("启动 API 服务器", "addr", srv.Addr)

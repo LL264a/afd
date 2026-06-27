@@ -1,11 +1,11 @@
-# Default values for nexus-dl.
+# Default values for afd.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
 replicaCount: 1
 
 image:
-  repository: ghcr.io/nexus-dl/nexus-dl
+  repository: ghcr.io/nexus-dl/afd
   pullPolicy: IfNotPresent
   tag: ""
 
@@ -50,7 +50,7 @@ ingress:
   className: ""
   annotations: {}
   hosts:
-    - host: nexus-dl.local
+    - host: afd.local
       paths:
         - path: /
           pathType: Prefix

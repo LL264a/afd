@@ -242,7 +242,7 @@ func (d *SFTPDownloader) Download(ctx context.Context) error {
 		localPath = filepath.Base(remotePath)
 	}
 
-	localFile, err := os.Create(localPath)
+	localFile, err := os.OpenFile(localPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to create local file: %w", err)
 	}

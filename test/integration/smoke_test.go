@@ -1,4 +1,4 @@
-// Package integration contains end-to-end smoke tests for NexusDL.
+// Package integration contains end-to-end smoke tests for AFD.
 //
 // These tests start an in-process API server backed by a real on-disk task
 // store and a temp data directory, then exercise the most common flows:

@@ -1,10 +1,10 @@
-# NexusDL Makefile
+# AFD Makefile
 # Cross-platform convenience targets. Works on Linux, macOS, and Windows
 # (via Git Bash, WSL, or `make` from msys2/chocolatey).
 
 GO          ?= go
 BIN_DIR     ?= bin
-BIN_NAME    ?= nexus-dl
+BIN_NAME    ?= afd
 BIN_PATH    := $(BIN_DIR)/$(BIN_NAME)
 
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -12,7 +12,7 @@ COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME  ?= $(shell date -u +%FT%TZ)
 LDFLAGS     := -s -w -X main.Version=$(VERSION) -X main.Commit=$(COMMIT) -X main.BuildTime=$(BUILD_TIME)
 
-PKG         := ./cmd/nexus-dl
+PKG         := ./cmd/afd
 TEST_PKGS   := ./...
 COVERAGE    := coverage.out
 
@@ -74,7 +74,7 @@ tidy:
 
 ## docker: Build the Docker image
 docker:
-	docker build -t nexus-dl:$(VERSION) \
+	docker build -t afd:$(VERSION) \
 	  --build-arg VERSION=$(VERSION) \
 	  --build-arg COMMIT=$(COMMIT) \
 	  --build-arg BUILD_TIME=$(BUILD_TIME) .

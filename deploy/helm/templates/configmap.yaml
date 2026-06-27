@@ -1,14 +1,14 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "nexus-dl.fullname" . }}
+  name: {{ include "afd.fullname" . }}
   labels:
-    {{- include "nexus-dl.labels" . | nindent 4 }}
+    {{- include "afd.labels" . | nindent 4 }}
 data:
   config.yaml: |-
     node:
-      id: {{ include "nexus-dl.fullname" . }}
-      name: {{ include "nexus-dl.fullname" . }}
+      id: {{ include "afd.fullname" . }}
+      name: {{ include "afd.fullname" . }}
       log_level: {{ .Values.logLevel }}
       data_dir: /data
 

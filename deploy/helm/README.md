@@ -1,4 +1,4 @@
-# NexusDL Helm Chart
+# AFD Helm Chart
 
 Distributed, cluster-aware multi-protocol download system.
 
@@ -6,40 +6,40 @@ Distributed, cluster-aware multi-protocol download system.
 
 ```bash
 # Add the repo (after first release)
-helm repo add nexus-dl https://nexus-dl.github.io/helm-charts
+helm repo add afd https://nexus-dl.github.io/helm-charts
 helm repo update
 
 # Install with auto-generated auth token
-helm install nexus-dl nexus-dl/nexus-dl --namespace nexus-dl --create-namespace
+helm install afd __MP__ --namespace afd --create-namespace
 
 # Install with a known auth token
-helm install nexus-dl nexus-dl/nexus-dl \
+helm install afd __MP__ \
   --set authToken=$(openssl rand -hex 32) \
-  --namespace nexus-dl --create-namespace
+  --namespace afd --create-namespace
 ```
 
 To retrieve the auth token (if not provided):
 
 ```bash
-kubectl get secret -n nexus-dl nexus-dl -o jsonpath='{.data.auth-token}' | base64 -d
+kubectl get secret -n afd afd -o jsonpath='{.data.auth-token}' | base64 -d
 ```
 
 ## Cluster Mode (3 nodes)
 
 ```bash
-helm install nexus-dl-1 nexus-dl/nexus-dl \
+helm install afd-1 __MP__ \
   --set replicaCount=1 \
-  --set nameOverride=nexus-dl-1
+  --set nameOverride=afd-1
 
-helm install nexus-dl-2 nexus-dl/nexus-dl \
+helm install afd-2 __MP__ \
   --set replicaCount=1 \
-  --set nameOverride=nexus-dl-2 \
-  --set cluster.joinPeers={nexus-dl-1:50052}
+  --set nameOverride=afd-2 \
+  --set cluster.joinPeers={afd-1:50052}
 
-helm install nexus-dl-3 nexus-dl/nexus-dl \
+helm install afd-3 __MP__ \
   --set replicaCount=1 \
-  --set nameOverride=nexus-dl-3 \
-  --set cluster.joinPeers={nexus-dl-1:50052}
+  --set nameOverride=afd-3 \
+  --set cluster.joinPeers={afd-1:50052}
 ```
 
 Each node must have a different `nameOverride` to be discoverable as a
@@ -50,7 +50,7 @@ distinct peer.
 | Value | Description | Default |
 | --- | --- | --- |
 | `replicaCount` | Number of pod replicas per release | `1` |
-| `image.repository` | Container image | `ghcr.io/nexus-dl/nexus-dl` |
+| `image.repository` | Container image | `ghcr.io/__MP__` |
 | `image.tag` | Image tag (defaults to `appVersion`) | `""` |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
 | `authToken` | API auth token. Random if empty. | `""` |
@@ -83,21 +83,21 @@ distinct peer.
 
 ```bash
 helm repo update
-helm upgrade nexus-dl nexus-dl/nexus-dl
+helm upgrade afd __MP__
 ```
 
 To bump the image tag without re-rendering the chart:
 
 ```bash
-helm upgrade nexus-dl nexus-dl/nexus-dl --reuse-values --set image.tag=0.2.0
+helm upgrade afd __MP__ --reuse-values --set image.tag=0.2.0
 ```
 
 ## Uninstalling
 
 ```bash
-helm uninstall nexus-dl --namespace nexus-dl
+helm uninstall afd --namespace afd
 # PVC is not deleted by default; remove it manually if you want a clean slate:
-kubectl delete pvc -n nexus-dl nexus-dl-data
+kubectl delete pvc -n afd afd-data
 ```
 
 ## Security Notes
@@ -107,13 +107,13 @@ kubectl delete pvc -n nexus-dl nexus-dl-data
 - All Linux capabilities are dropped.
 - The cluster gRPC and UDP discovery ports should be on a private network
   in production. For multi-node cluster mode, consider using
-  `NetworkPolicy` to restrict these to other `nexus-dl` pods only.
+  `NetworkPolicy` to restrict these to other `afd` pods only.
 
 ## Linting
 
 ```bash
 helm lint deploy/helm
-helm template nexus-dl deploy/helm | less
+helm template afd deploy/helm | less
 ```
 
 ## Testing (helm-unittest plugin)

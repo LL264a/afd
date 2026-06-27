@@ -1,18 +1,18 @@
 openapi: 3.0.3
 info:
-  title: NexusDL REST API
+  title: AFD REST API
   version: 0.1.0
   description: |
-    REST API for NexusDL — a distributed, multi-protocol download system.
+    REST API for AFD — a distributed, multi-protocol download system.
 
     Most endpoints require authentication via `Authorization: Bearer <token>`
     or `X-API-Key: <token>` when `api.auth_token` is configured on the server.
   contact:
-    name: NexusDL
-    url: https://github.com/nexus-dl/nexus-dl
+    name: AFD
+    url: https://github.com/nexus-dl/afd
   license:
     name: MIT
-    url: https://github.com/nexus-dl/nexus-dl/blob/main/LICENSE
+    url: https://github.com/nexus-dl/afd/blob/main/LICENSE
 
 servers:
   - url: http://localhost:8080

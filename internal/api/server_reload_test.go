@@ -45,7 +45,7 @@ func TestHandleReloadConfig_AppliesNewValues(t *testing.T) {
 		t.Fatalf("logger: %v", err)
 	}
 	path := writeConfig(t, validConfigYAML)
-	t.Setenv("NEXUS_CONFIG_FILE", path)
+	t.Setenv("AFD_CONFIG_FILE", path)
 
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -79,7 +79,7 @@ func TestHandleReloadConfig_RejectsBadConfig(t *testing.T) {
 		t.Fatalf("logger: %v", err)
 	}
 	path := writeConfig(t, validConfigYAML)
-	t.Setenv("NEXUS_CONFIG_FILE", path)
+	t.Setenv("AFD_CONFIG_FILE", path)
 
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -97,7 +97,7 @@ api:
   port: 70000
 `
 	badPath := writeConfig(t, badYAML)
-	t.Setenv("NEXUS_CONFIG_FILE", badPath)
+	t.Setenv("AFD_CONFIG_FILE", badPath)
 
 	body := bytes.NewReader(nil)
 	req := httptest.NewRequest("POST", "/api/config/reload", body)

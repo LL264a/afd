@@ -1,12 +1,12 @@
-# NexusDL
+# AFD
 
 > A distributed, cluster-aware multi-protocol download system with an aria2-compatible RPC interface.
 
 [![Go Version](https://img.shields.io/badge/Go-1.20+-00ADD8)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-passing-brightgreen)](https://github.com/nexus-dl/nexus-dl)
-[![codecov](https://codecov.io/gh/nexus-dl/nexus-dl/branch/main/graph/badge.svg)](https://codecov.io/gh/nexus-dl/nexus-dl)
-[![Go Report Card](https://goreportcard.com/badge/github.com/nexus-dl/nexus-dl)](https://goreportcard.com/report/github.com/nexus-dl/nexus-dl)
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen)](https://github.com/nexus-dl/afd)
+[![codecov](https://codecov.io/gh/nexus-dl/afd/branch/main/graph/badge.svg)](https://codecov.io/gh/nexus-dl/afd)
+[![Go Report Card](https://goreportcard.com/badge/github.com/nexus-dl/afd)](https://goreportcard.com/report/github.com/nexus-dl/afd)
 
 ## Features
 
@@ -35,10 +35,10 @@
 ### Run from source
 
 ```bash
-git clone https://github.com/nexus-dl/nexus-dl.git
-cd nexus-dl
-go build -o nexus-dl ./cmd/nexus-dl
-./nexus-dl serve                       # http://localhost:8080
+git clone https://github.com/nexus-dl/afd.git
+cd afd
+go build -o afd ./cmd/afd
+./afd serve                       # http://localhost:8080
 ```
 
 ### Run with Docker
@@ -61,11 +61,11 @@ Web UI: deploy [`ui/`](../ui) and proxy `/api` and `/ws` to this service.  See [
 
 ## Configuration
 
-NexusDL reads configuration in this order (later overrides earlier):
+AFD reads configuration in this order (later overrides earlier):
 
 1. Built-in defaults
 2. Config file (YAML or JSON)
-3. Environment variables (`NEXUS_*`)
+3. Environment variables (`AFD_*`)
 4. CLI flags
 
 ### `config.yaml`
@@ -136,25 +136,25 @@ download:
 
 | Variable | Maps to |
 | --- | --- |
-| `NEXUS_NODE_ID` | `node.id` |
-| `NEXUS_NODE_NAME` | `node.name` |
-| `NEXUS_NODE_LOG_LEVEL` | `node.log_level` |
-| `NEXUS_NODE_DATA_DIR` | `node.data_dir` |
-| `NEXUS_API_HOST` | `api.host` |
-| `NEXUS_API_PORT` | `api.port` |
-| `NEXUS_API_AUTH_TOKEN` | `api.auth_token` |
-| `NEXUS_API_RATE_LIMIT` | `api.rate_limit` |
-| `NEXUS_CLUSTER_GRPC_PORT` | `cluster.grpc_port` |
-| `NEXUS_CLUSTER_DISCOVERY_PORT` | `cluster.discovery_port` |
-| `NEXUS_DOWNLOAD_MAX_CONNECTIONS` | `download.max_connections` |
-| `NEXUS_DOWNLOAD_TIMEOUT` | `download.timeout` (seconds) |
-| `NEXUS_DOWNLOAD_RETRY_COUNT` | `download.retry_count` |
-| `NEXUS_DOWNLOAD_SPEED_LIMIT` | `download.speed_limit` |
+| `AFD_NODE_ID` | `node.id` |
+| `AFD_NODE_NAME` | `node.name` |
+| `AFD_NODE_LOG_LEVEL` | `node.log_level` |
+| `AFD_NODE_DATA_DIR` | `node.data_dir` |
+| `AFD_API_HOST` | `api.host` |
+| `AFD_API_PORT` | `api.port` |
+| `AFD_API_AUTH_TOKEN` | `api.auth_token` |
+| `AFD_API_RATE_LIMIT` | `api.rate_limit` |
+| `AFD_CLUSTER_GRPC_PORT` | `cluster.grpc_port` |
+| `AFD_CLUSTER_DISCOVERY_PORT` | `cluster.discovery_port` |
+| `AFD_DOWNLOAD_MAX_CONNECTIONS` | `download.max_connections` |
+| `AFD_DOWNLOAD_TIMEOUT` | `download.timeout` (seconds) |
+| `AFD_DOWNLOAD_RETRY_COUNT` | `download.retry_count` |
+| `AFD_DOWNLOAD_SPEED_LIMIT` | `download.speed_limit` |
 
 ## CLI
 
 ```
-nexus-dl [global flags] <command> [command flags]
+afd [global flags] <command> [command flags]
 ```
 
 Global flags: `-c, --config <path>` (config file), `--api-host <url>` (default `http://localhost:8080`)
@@ -181,13 +181,13 @@ Global flags: `-c, --config <path>` (config file), `--api-host <url>` (default `
 
 ```bash
 # Add a torrent
-./nexus-dl add https://archive.org/download/file.torrent -p 5
+./afd add https://archive.org/download/file.torrent -p 5
 
 # Batch add from a file (URLs one per line, # comments)
-./nexus-dl add -i urls.txt
+./afd add -i urls.txt
 
 # Raise global speed limit at runtime
-./nexus-dl log-level debug
+./afd log-level debug
 ```
 
 ## API
@@ -276,7 +276,7 @@ Prometheus format at `/metrics`:
 
 ## Cluster
 
-NexusDL forms a peer-to-peer cluster with:
+AFD forms a peer-to-peer cluster with:
 
 - **Discovery**: UDP multicast + unicast seed peers (`cluster.join_peers`)
 - **Membership**: SWIM-style health checks with `node_timeout`
@@ -288,8 +288,8 @@ NexusDL forms a peer-to-peer cluster with:
 Bring up a 3-node cluster with `docker compose`:
 
 ```bash
-NODE_ID=node-1 NEXUS_API_PORT=8080 NEXUS_CLUSTER_GRPC_PORT=50051 NEXUS_CLUSTER_DISCOVERY_PORT=50052 docker compose up -d
-NODE_ID=node-2 NEXUS_API_PORT=8081 NEXUS_CLUSTER_GRPC_PORT=50061 NEXUS_CLUSTER_DISCOVERY_PORT=50062 JOIN_PEERS=node-1:50052 docker compose up -d
+NODE_ID=node-1 AFD_API_PORT=8080 AFD_CLUSTER_GRPC_PORT=50051 AFD_CLUSTER_DISCOVERY_PORT=50052 docker compose up -d
+NODE_ID=node-2 AFD_API_PORT=8081 AFD_CLUSTER_GRPC_PORT=50061 AFD_CLUSTER_DISCOVERY_PORT=50062 JOIN_PEERS=node-1:50052 docker compose up -d
 ```
 
 ## Architecture
@@ -301,7 +301,7 @@ NODE_ID=node-2 NEXUS_API_PORT=8081 NEXUS_CLUSTER_GRPC_PORT=50061 NEXUS_CLUSTER_D
                                      │
                                      ▼
               ╔══════════════════════════════════════════╗
-              ║           NexusDL Node (:8080)           ║
+              ║           AFD Node (:8080)           ║
               ║──────────────────────────────────────────║
               ║  API layer  (auth, CORS, rate-limit)     ║
               ║      │                                   ║
@@ -359,16 +359,16 @@ NODE_ID=node-2 NEXUS_API_PORT=8081 NEXUS_CLUSTER_GRPC_PORT=50061 NEXUS_CLUSTER_D
 
 ```bash
 # Local
-go build -o nexus-dl ./cmd/nexus-dl
+go build -o afd ./cmd/afd
 
 # With version injection
 go build -ldflags "-X main.Version=1.0.0 -X main.Commit=$(git rev-parse HEAD) -X main.BuildTime=$(date -u +%FT%TZ)" \
-  -o nexus-dl ./cmd/nexus-dl
+  -o afd ./cmd/afd
 
 # Cross-compile
-GOOS=linux   GOARCH=amd64 go build -o nexus-dl-linux   ./cmd/nexus-dl
-GOOS=darwin  GOARCH=amd64 go build -o nexus-dl-darwin  ./cmd/nexus-dl
-GOOS=windows GOARCH=amd64 go build -o nexus-dl.exe     ./cmd/nexus-dl
+GOOS=linux   GOARCH=amd64 go build -o afd-linux   ./cmd/afd
+GOOS=darwin  GOARCH=amd64 go build -o afd-darwin  ./cmd/afd
+GOOS=windows GOARCH=amd64 go build -o afd.exe     ./cmd/afd
 ```
 
 `build.ps1` is provided for Windows.
@@ -376,14 +376,14 @@ GOOS=windows GOARCH=amd64 go build -o nexus-dl.exe     ./cmd/nexus-dl
 ## Docker
 
 ```bash
-docker build -t nexus-dl:latest .
-docker run -d --name nexus-dl \
+docker build -t afd:latest .
+docker run -d --name afd \
   -p 8080:8080 \
   -p 50051:50051 \
   -p 50052:50052/udp \
   -v $(pwd)/data:/data \
-  -e NEXUS_API_AUTH_TOKEN=$(openssl rand -hex 32) \
-  nexus-dl:latest
+  -e AFD_API_AUTH_TOKEN=$(openssl rand -hex 32) \
+  afd:latest
 ```
 
 Or use `docker compose`:
@@ -406,8 +406,8 @@ Coverage today: `internal/task`, `internal/downloader/ratelimit`, `internal/clus
 ## Project Layout
 
 ```
-nexus-dl/
-├── cmd/nexus-dl/main.go        # CLI entry
+afd/
+├── cmd/afd/main.go        # CLI entry
 ├── internal/
 │   ├── api/                    # HTTP / JSON-RPC / XML-RPC / WS
 │   ├── cluster/                # membership, scheduler, gRPC, NAT

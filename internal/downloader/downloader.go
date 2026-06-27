@@ -1627,7 +1627,7 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 		return fmt.Errorf("create output directory: %w", err)
 	}
 
-	file, err := os.Create(d.outputPath)
+	file, err := os.OpenFile(d.outputPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
@@ -1853,7 +1853,7 @@ func (d *Downloader) getCookieFilePath() string {
 		return d.cookieFile
 	}
 	hash := sha1.Sum([]byte(d.url))
-	return filepath.Join(os.TempDir(), fmt.Sprintf("nexus-dl-cookies-%x.gob", hash))
+	return filepath.Join(os.TempDir(), fmt.Sprintf("afd-cookies-%x.gob", hash))
 }
 
 func (d *Downloader) loadCookies() error {
@@ -1903,7 +1903,7 @@ func (d *Downloader) saveCookies() error {
 	path := d.getCookieFilePath()
 	tmpPath := path + ".tmp"
 
-	file, err := os.Create(tmpPath)
+	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}

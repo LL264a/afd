@@ -11,8 +11,8 @@
 
 **Please do not file public GitHub issues for security vulnerabilities.**
 
-Report privately by email to **security@nexus-dl.example.com** (or open a
-private security advisory on GitHub: <https://github.com/nexus-dl/nexus-dl/security/advisories/new>).
+Report privately by email to **security@afd.example.com** (or open a
+private security advisory on GitHub: <https://github.com/nexus-dl/afd/security/advisories/new>).
 
 A maintainer will acknowledge receipt within **48 hours** and provide a triage
 plan within **5 business days**.
@@ -30,7 +30,7 @@ disclosure so we can ship a fix and CVE if applicable.
 
 ## Security Design Notes
 
-NexusDL is hardened against the most common attack surfaces:
+AFD is hardened against the most common attack surfaces:
 
 - API authentication with constant-time token comparison
   ([`subtle.ConstantTimeCompare`](https://pkg.go.dev/crypto/subtle))
@@ -46,7 +46,7 @@ NexusDL is hardened against the most common attack surfaces:
 
 ## Best Practices for Deployment
 
-- **Always set `NEXUS_API_AUTH_TOKEN`** to a random ≥ 32 byte secret:
+- **Always set `AFD_API_AUTH_TOKEN`** to a random ≥ 32 byte secret:
   `openssl rand -hex 32`
 - Run behind a reverse proxy (nginx, Caddy, Traefik) with TLS termination
 - Restrict the cluster gRPC port (`50051/tcp`) and UDP discovery (`50052/udp`)

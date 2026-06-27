@@ -2,16 +2,16 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "nexus-dl.fullname" . }}
+  name: {{ include "afd.fullname" . }}
   labels:
-    {{- include "nexus-dl.labels" . | nindent 4 }}
+    {{- include "afd.labels" . | nindent 4 }}
     {{- with .Values.serviceMonitor.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
   selector:
     matchLabels:
-      {{- include "nexus-dl.selectorLabels" . | nindent 6 }}
+      {{- include "afd.selectorLabels" . | nindent 6 }}
   endpoints:
     - port: api
       path: {{ .Values.serviceMonitor.path }}

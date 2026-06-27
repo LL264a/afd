@@ -1,10 +1,10 @@
 # Build artifacts
 /bin/
-/nexus-dl
-/nexus-dl.exe
-/nexus-dl-linux
-/nexus-dl-darwin
-/nexus-dl-windows*
+/afd
+/afd.exe
+/afd-linux
+/afd-darwin
+/afd-windows*
 /dist/
 *.exe
 *.dll

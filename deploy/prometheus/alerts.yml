@@ -1,22 +1,22 @@
 groups:
-  - name: nexus-dl.rules
+  - name: afd.rules
     interval: 30s
     rules:
       # A node has been unreachable for too long.
-      - alert: NexusDLNodeOffline
-        expr: up{job="nexus-dl"} == 0
+      - alert: AFDNodeOffline
+        expr: up{job="afd"} == 0
         for: 2m
         labels:
           severity: critical
         annotations:
-          summary: "NexusDL node {{ $labels.instance }} is offline"
+          summary: "AFD node {{ $labels.instance }} is offline"
           description: |
             The Prometheus scrape for {{ $labels.instance }} has been failing
             for more than 2 minutes. Check the node process, network, and
-            systemd logs (`journalctl -u nexus-dl -n 200`).
+            systemd logs (`journalctl -u afd -n 200`).
 
       # Cluster membership shrank below the expected count.
-      - alert: NexusDLClusterDegraded
+      - alert: AFDClusterDegraded
         expr: sum(nexus_cluster_nodes_online) < on() group_left sum(nexus_cluster_nodes_expected)
         for: 5m
         labels:
@@ -28,7 +28,7 @@ groups:
             Check connectivity, UDP discovery port 50052, and gRPC port 50051.
 
       # Task queue is growing — backpressure or stuck scheduler.
-      - alert: NexusDLBacklogGrowing
+      - alert: AFDBacklogGrowing
         expr: |
           deriv(nexus_tasks_total[10m]) > 5
         for: 15m
@@ -41,7 +41,7 @@ groups:
             cluster load, network egress, and disk space.
 
       # No active downloads but tasks are pending — scheduler may be stuck.
-      - alert: NexusDLSchedulerStalled
+      - alert: AFDSchedulerStalled
         expr: |
           sum(nexus_tasks_active) == 0
             and
@@ -56,7 +56,7 @@ groups:
             the scheduler, the cluster's online nodes, and node load.
 
       # A task has been downloading but speed has been zero for 5 minutes.
-      - alert: NexusDLTaskStalled
+      - alert: AFDTaskStalled
         expr: |
           nexus_download_speed_bytes == 0
         for: 5m
@@ -70,7 +70,7 @@ groups:
             pausing and resuming, or removing the task.
 
       # High error rate.
-      - alert: NexusDLHighErrorRate
+      - alert: AFDHighErrorRate
         expr: |
           sum(rate(nexus_http_requests_total{status=~"5.."}[5m]))
             /
@@ -86,9 +86,9 @@ groups:
             5xx. Check API logs.
 
       # Disk almost full on the data directory.
-      - alert: NexusDLDiskAlmostFull
+      - alert: AFDDiskAlmostFull
         expr: |
-          (node_filesystem_avail_bytes{mountpoint="/var/lib/nexus-dl"} / node_filesystem_size_bytes{mountpoint="/var/lib/nexus-dl"})
+          (node_filesystem_avail_bytes{mountpoint="/var/lib/afd"} / node_filesystem_size_bytes{mountpoint="/var/lib/afd"})
             < 0.1
         for: 10m
         labels:
@@ -96,5 +96,5 @@ groups:
         annotations:
           summary: "Data directory almost full on {{ $labels.instance }}"
           description: |
-            Less than 10% free space on /var/lib/nexus-dl. Downloads will
+            Less than 10% free space on /var/lib/afd. Downloads will
             start to fail. Free space or expand the volume.

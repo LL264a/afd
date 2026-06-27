@@ -100,8 +100,8 @@ func TestJSFilesParse(t *testing.T) {
 		if len(data) == 0 {
 			t.Errorf("%s is empty", e.Name())
 		}
-		if !strings.Contains(string(data), "nexus") && !strings.Contains(string(data), "NexusDL") {
-			t.Logf("warning: %s does not mention 'nexus' or 'NexusDL'", e.Name())
+		if !strings.Contains(string(data), "afd") && !strings.Contains(string(data), "AFD") {
+			t.Logf("warning: %s does not mention 'afd' or 'AFD'", e.Name())
 		}
 	}
 }

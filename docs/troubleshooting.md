@@ -25,16 +25,16 @@ The scheduler cannot find an online peer. Most common causes:
 
 - `cluster.node_timeout` is too low for your network latency
 - UDP discovery port `50052` is blocked by a firewall
-- The peer never started (check `journalctl -u nexus-dl` or the container log)
+- The peer never started (check `journalctl -u afd` or the container log)
 
-Run `nexus-dl nodes` to inspect the cluster.
+Run `afd nodes` to inspect the cluster.
 
 ## Tasks are stuck at `pending`
 
 Two possibilities:
 
 1. The scheduler is full and `download.max_connections` is too low. Raise it.
-2. The target node is offline. Run `nexus-dl status` and `nexus-dl nodes`.
+2. The target node is offline. Run `afd status` and `afd nodes`.
 
 ## "disk space insufficient" mid-download
 
@@ -67,10 +67,10 @@ unlimited — make sure you didn't set it to `0` by accident.
 
 ## Authentication: 401 even with the right token
 
-- Check `api.auth_token` is set in `config.yaml` (or `NEXUS_API_AUTH_TOKEN` env)
+- Check `api.auth_token` is set in `config.yaml` (or `AFD_API_AUTH_TOKEN` env)
 - Make sure the server has been restarted after changing the token
 - Watch for trailing whitespace in the token; YAML keeps it
-- `nexus-dl config api.auth_token` should print the value (omitted in the
+- `afd config api.auth_token` should print the value (omitted in the
   table for clarity, use `--api-host http://localhost:8080` if not local)
 
 ## S3: "AccessDenied" on download
@@ -92,19 +92,19 @@ is a 0.2 feature.
 
 ## Service won't start under systemd: "permission denied"
 
-`/var/lib/nexus-dl` must be owned by the `nexus` user. Create it and
+`/var/lib/afd` must be owned by the `nexus` user. Create it and
 adjust ownership:
 
 ```bash
 sudo useradd -r -s /usr/sbin/nologin nexus
-sudo mkdir -p /var/lib/nexus-dl /etc/nexus-dl
-sudo chown -R nexus:nexus /var/lib/nexus-dl
+sudo mkdir -p /var/lib/afd /etc/afd
+sudo chown -R nexus:nexus /var/lib/afd
 ```
 
 ## How to enable debug logging
 
 ```bash
-./nexus-dl log-level debug
+./afd log-level debug
 ```
 
 Or in `config.yaml`:
@@ -119,10 +119,10 @@ And restart.
 ## How to wipe state and start over
 
 ```bash
-sudo systemctl stop nexus-dl
-sudo rm -rf /var/lib/nexus-dl/tasks/*
-sudo systemctl start nexus-dl
+sudo systemctl stop afd
+sudo rm -rf /var/lib/afd/tasks/*
+sudo systemctl start afd
 ```
 
 This removes **all** persisted task state. Downloaded files in
-`/var/lib/nexus-dl/downloads` are untouched.
+`/var/lib/afd/downloads` are untouched.

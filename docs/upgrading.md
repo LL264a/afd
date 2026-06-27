@@ -1,6 +1,6 @@
 # Upgrading
 
-This document covers how to upgrade between NexusDL versions and the
+This document covers how to upgrade between AFD versions and the
 breaking changes to be aware of.
 
 ## Upgrade Procedure (General)
@@ -12,22 +12,22 @@ breaking changes to be aware of.
    subdirectory, before upgrading.
 3. Stop the running node:
    ```bash
-   sudo systemctl stop nexus-dl
+   sudo systemctl stop afd
    # or
    docker compose down
    ```
 4. Replace the binary (or pull the new image).
 5. Start the node:
    ```bash
-   sudo systemctl start nexus-dl
+   sudo systemctl start afd
    # or
    docker compose up -d
    ```
 6. Tail the logs for a minute to confirm no migration errors:
    ```bash
-   journalctl -u nexus-dl -f
+   journalctl -u afd -f
    ```
-7. Run `nexus-dl version` to confirm the new build is in place.
+7. Run `afd version` to confirm the new build is in place.
 
 ## Compatibility Matrix
 
@@ -129,7 +129,7 @@ To migrate, stop the node, copy the old `tasks/` to the new
 
 ## Docker Tagging
 
-`ghcr.io/nexus-dl/nexus-dl` is tagged:
+`ghcr.io/nexus-dl/afd` is tagged:
 
 | Tag | Meaning |
 | --- | --- |

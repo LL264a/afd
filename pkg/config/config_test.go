@@ -49,14 +49,14 @@ func TestConfigValidation(t *testing.T) {
 }
 
 func TestEnvOverrides(t *testing.T) {
-	os.Setenv("NEXUS_NODE_ID", "env-test-node")
-	os.Setenv("NEXUS_API_PORT", "9090")
-	os.Setenv("NEXUS_DOWNLOAD_MAX_CONNECTIONS", "16")
+	os.Setenv("AFD_NODE_ID", "env-test-node")
+	os.Setenv("AFD_API_PORT", "9090")
+	os.Setenv("AFD_DOWNLOAD_MAX_CONNECTIONS", "16")
 
 	defer func() {
-		os.Unsetenv("NEXUS_NODE_ID")
-		os.Unsetenv("NEXUS_API_PORT")
-		os.Unsetenv("NEXUS_DOWNLOAD_MAX_CONNECTIONS")
+		os.Unsetenv("AFD_NODE_ID")
+		os.Unsetenv("AFD_API_PORT")
+		os.Unsetenv("AFD_DOWNLOAD_MAX_CONNECTIONS")
 	}()
 
 	cfg, err := Load("")

@@ -888,7 +888,7 @@ func (s *JSONRPCServer) getVersion() (any, error) {
 
 func (s *JSONRPCServer) getSessionInfo() (any, error) {
 	return map[string]string{
-		"sessionId": "nexus-dl-" + s.startedAt.Format("20060102-150405"),
+		"sessionId": "afd-" + s.startedAt.Format("20060102-150405"),
 	}, nil
 }
 

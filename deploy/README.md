@@ -1,14 +1,14 @@
 # Deployment
 
-This directory contains production deployment manifests for NexusDL.
+This directory contains production deployment manifests for AFD.
 
 | Path | Purpose |
 | --- | --- |
-| `systemd/nexus-dl.service` | systemd unit (Linux) |
-| `nginx/nexus-dl.conf` | nginx reverse proxy with TLS + rate limiting |
+| `systemd/afd.service` | systemd unit (Linux) |
+| `nginx/afd.conf` | nginx reverse proxy with TLS + rate limiting |
 | `prometheus/alerts.yml` | Prometheus alert rules |
 | `prometheus/scrape.yml` | Prometheus scrape config example |
-| `grafana/nexus-dl.json` | Grafana dashboard |
+| `grafana/afd.json` | Grafana dashboard |
 | `helm/` | Kubernetes Helm chart |
 
 ## Docker / docker-compose
@@ -26,13 +26,13 @@ The Docker image is built by the top-level `Dockerfile`.
 | Scenario | Use |
 | --- | --- |
 | Local dev / single node | `docker compose up -d` |
-| Linux VM / bare metal | `systemd/nexus-dl.service` |
+| Linux VM / bare metal | `systemd/afd.service` |
 | Kubernetes | `helm/` chart |
-| Public internet exposure | `nginx/nexus-dl.conf` in front |
+| Public internet exposure | `nginx/afd.conf` in front |
 
 ## Production Checklist
 
-- [ ] Set `NEXUS_API_AUTH_TOKEN` to ≥ 32 random bytes
+- [ ] Set `AFD_API_AUTH_TOKEN` to ≥ 32 random bytes
 - [ ] Put a reverse proxy with TLS in front of the API port
 - [ ] Restrict gRPC and UDP discovery ports to a private network
 - [ ] Mount a quota-limited filesystem for the data directory

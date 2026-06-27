@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package nexus;
 
-option go_package = "github.com/nexus-dl/nexus-dl/proto/nexus";
+option go_package = "github.com/nexus-dl/afd/proto/nexus";
 
 service Nexus {
     rpc SubmitTask(SubmitTaskRequest) returns (SubmitTaskResponse);

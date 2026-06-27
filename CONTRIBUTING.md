@@ -1,6 +1,6 @@
-# Contributing to NexusDL
+# Contributing to AFD
 
-Thank you for your interest in improving NexusDL! This guide explains how to
+Thank you for your interest in improving AFD! This guide explains how to
 file issues, propose changes, and submit pull requests.
 
 ## Code of Conduct
@@ -24,10 +24,10 @@ Requirements:
 - For cluster testing: `docker` and `docker compose`
 
 ```bash
-git clone https://github.com/nexus-dl/nexus-dl.git
-cd nexus-dl
+git clone https://github.com/nexus-dl/afd.git
+cd afd
 go mod download
-make build          # produces ./bin/nexus-dl
+make build          # produces ./bin/afd
 make test           # runs all unit tests
 ```
 
@@ -35,7 +35,7 @@ Useful targets (see [Makefile](Makefile)):
 
 | Target | Description |
 | --- | --- |
-| `make build` | Build binary into `bin/nexus-dl` (version-injected) |
+| `make build` | Build binary into `bin/afd` (version-injected) |
 | `make run` | Run `serve` against the local `config.yaml` |
 | `make test` | Run `go test ./...` |
 | `make test-race` | Run with the race detector (requires CGO) |

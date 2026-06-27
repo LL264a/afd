@@ -266,9 +266,9 @@ func NewServer(cfg *config.Config, taskQueue *task.TaskQueue, taskStore *task.Ta
 	// process so the binary can be deployed independently of the UI
 	// release cadence.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-NexusDL-Service", "core")
+		w.Header().Set("X-AFD-Service", "core")
 		writeJSON(w, http.StatusNotFound, ErrorResponse{
-			Error: "NexusDL Core is a pure JSON/WebSocket API. Please deploy the UI separately from the ui/ repository.",
+			Error: "AFD Core is a pure JSON/WebSocket API. Please deploy the UI separately from the ui/ repository.",
 			Code:  404,
 		})
 	})

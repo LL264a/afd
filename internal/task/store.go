@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -62,6 +63,19 @@ func (s *TaskStore) Save(task *Task) error {
 	// would leave a zero-length file and the task would be lost on
 	// the next LoadAll.
 	dst := s.taskPath(task.ID)
+	// 跨进程排他锁：使用独立的 .lock 文件，避免锁住目标文件导致 Windows 上 rename 失败
+	lockPath := dst + ".lock"
+	lockFile, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open lock file for task %s: %w", task.ID, err)
+	}
+	defer lockFile.Close()
+	defer os.Remove(lockPath)
+	if err := flockFile(lockFile); err != nil {
+		return fmt.Errorf("failed to lock task %s: %w", task.ID, err)
+	}
+	defer unflockFile(lockFile)
+
 	tmp, err := os.CreateTemp(dir, task.ID+".*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file for task %s: %w", task.ID, err)
@@ -108,11 +122,21 @@ func (s *TaskStore) Load(id string) (*Task, error) {
 	defer s.mu.RUnlock()
 
 	path := s.taskPath(id)
-	data, err := os.ReadFile(path)
+	f, err := os.OpenFile(path, os.O_RDONLY, 0644)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("task %s: %w", id, ErrTaskNotFound)
 		}
+		return nil, fmt.Errorf("failed to read task %s: %w", id, err)
+	}
+	defer f.Close()
+	if err := flockFile(f); err != nil {
+		return nil, fmt.Errorf("failed to lock task file for task %s: %w", id, err)
+	}
+	defer unflockFile(f)
+
+	data, err := io.ReadAll(f)
+	if err != nil {
 		return nil, fmt.Errorf("failed to read task %s: %w", id, err)
 	}
 

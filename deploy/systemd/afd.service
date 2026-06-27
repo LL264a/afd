@@ -1,6 +1,6 @@
 [Unit]
-Description=NexusDL distributed download node
-Documentation=https://github.com/nexus-dl/nexus-dl
+Description=AFD distributed download node
+Documentation=https://github.com/nexus-dl/afd
 After=network-online.target
 Wants=network-online.target
 
@@ -8,8 +8,8 @@ Wants=network-online.target
 Type=simple
 User=nexus
 Group=nexus
-WorkingDirectory=/var/lib/nexus-dl
-ExecStart=/usr/local/bin/nexus-dl serve -c /etc/nexus-dl/config.yaml
+WorkingDirectory=/var/lib/afd
+ExecStart=/usr/local/bin/afd serve -c /etc/afd/config.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 
 # Hardening
@@ -17,11 +17,11 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/nexus-dl
+ReadWritePaths=/var/lib/afd
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
 RestrictNamespaces=true
 RestrictRealtime=true
 SystemCallArchitectures=native
@@ -43,12 +43,12 @@ StartLimitIntervalSec=60s
 StartLimitBurst=3
 
 # Environment
-Environment=NEXUS_NODE_DATA_DIR=/var/lib/nexus-dl
-EnvironmentFile=-/etc/nexus-dl/nexus-dl.env
+Environment=AFD_NODE_DATA_DIR=/var/lib/afd
+EnvironmentFile=-/etc/afd/afd.env
 
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=nexus-dl
+SyslogIdentifier=afd
 
 [Install]
 WantedBy=multi-user.target

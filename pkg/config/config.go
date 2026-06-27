@@ -407,10 +407,10 @@ func Load(path string) (*Config, error) {
 	loadedPaths := make(map[string]bool) // 防止循环 include
 
 	if path == "" {
-		path = os.Getenv("NEXUS_CONFIG_FILE")
+		path = os.Getenv("AFD_CONFIG_FILE")
 	}
 	if path == "" {
-		for _, candidate := range []string{"/etc/nexus-dl/config.yaml", "./config.yaml", "./config.yml"} {
+		for _, candidate := range []string{"/etc/afd/config.yaml", "./config.yaml", "./config.yml"} {
 			if _, err := os.Stat(candidate); err == nil {
 				path = candidate
 				break
@@ -488,106 +488,106 @@ func parseConfig(data []byte, ext string, cfg *Config) error {
 }
 
 func applyEnvOverrides(cfg *Config) {
-	if v := os.Getenv("NEXUS_NODE_ID"); v != "" {
+	if v := os.Getenv("AFD_NODE_ID"); v != "" {
 		cfg.Node.ID = v
 	}
-	if v := os.Getenv("NEXUS_NODE_NAME"); v != "" {
+	if v := os.Getenv("AFD_NODE_NAME"); v != "" {
 		cfg.Node.Name = v
 	}
-	if v := os.Getenv("NEXUS_NODE_LOG_LEVEL"); v != "" {
+	if v := os.Getenv("AFD_NODE_LOG_LEVEL"); v != "" {
 		cfg.Node.LogLevel = v
 	}
-	if v := os.Getenv("NEXUS_NODE_DATA_DIR"); v != "" {
+	if v := os.Getenv("AFD_NODE_DATA_DIR"); v != "" {
 		cfg.Node.DataDir = v
 	}
-	if v := os.Getenv("NEXUS_API_HOST"); v != "" {
+	if v := os.Getenv("AFD_API_HOST"); v != "" {
 		cfg.API.Host = v
 	}
-	if v := os.Getenv("NEXUS_API_PORT"); v != "" {
+	if v := os.Getenv("AFD_API_PORT"); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {
 			cfg.API.Port = port
 		} else {
-			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_API_PORT: %s\n", v)
+			fmt.Fprintf(os.Stderr, "warning: invalid AFD_API_PORT: %s\n", v)
 		}
 	}
-	if v := os.Getenv("NEXUS_API_AUTH_TOKEN"); v != "" {
+	if v := os.Getenv("AFD_API_AUTH_TOKEN"); v != "" {
 		cfg.API.AuthToken = v
 	}
-	if v := os.Getenv("NEXUS_API_RATE_LIMIT"); v != "" {
+	if v := os.Getenv("AFD_API_RATE_LIMIT"); v != "" {
 		if limit, err := strconv.Atoi(v); err == nil {
 			cfg.API.RateLimit = limit
 		} else {
-			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_API_RATE_LIMIT: %s\n", v)
+			fmt.Fprintf(os.Stderr, "warning: invalid AFD_API_RATE_LIMIT: %s\n", v)
 		}
 	}
-	if v := os.Getenv("NEXUS_API_TLS_ENABLED"); v != "" {
+	if v := os.Getenv("AFD_API_TLS_ENABLED"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.API.TLSEnabled = b
 		} else {
-			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_API_TLS_ENABLED: %s\n", v)
+			fmt.Fprintf(os.Stderr, "warning: invalid AFD_API_TLS_ENABLED: %s\n", v)
 		}
 	}
-	if v := os.Getenv("NEXUS_API_TLS_CERT_FILE"); v != "" {
+	if v := os.Getenv("AFD_API_TLS_CERT_FILE"); v != "" {
 		cfg.API.TLSCertFile = v
 	}
-	if v := os.Getenv("NEXUS_API_TLS_KEY_FILE"); v != "" {
+	if v := os.Getenv("AFD_API_TLS_KEY_FILE"); v != "" {
 		cfg.API.TLSKeyFile = v
 	}
-	if v := os.Getenv("NEXUS_API_ENABLE_PPROF"); v != "" {
+	if v := os.Getenv("AFD_API_ENABLE_PPROF"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			bv := b
 			cfg.API.EnablePprof = &bv
 		} else {
-			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_API_ENABLE_PPROF: %s\n", v)
+			fmt.Fprintf(os.Stderr, "warning: invalid AFD_API_ENABLE_PPROF: %s\n", v)
 		}
 	}
-	if v := os.Getenv("NEXUS_CLUSTER_GRPC_PORT"); v != "" {
+	if v := os.Getenv("AFD_CLUSTER_GRPC_PORT"); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {
 			cfg.Cluster.GRPCPort = port
 		} else {
-			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_CLUSTER_GRPC_PORT: %s\n", v)
+			fmt.Fprintf(os.Stderr, "warning: invalid AFD_CLUSTER_GRPC_PORT: %s\n", v)
 		}
 	}
-	if v := os.Getenv("NEXUS_CLUSTER_DISCOVERY_PORT"); v != "" {
+	if v := os.Getenv("AFD_CLUSTER_DISCOVERY_PORT"); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {
 			cfg.Cluster.DiscoveryPort = port
 		} else {
-			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_CLUSTER_DISCOVERY_PORT: %s\n", v)
+			fmt.Fprintf(os.Stderr, "warning: invalid AFD_CLUSTER_DISCOVERY_PORT: %s\n", v)
 		}
 	}
-	if v := os.Getenv("NEXUS_DOWNLOAD_MAX_CONNECTIONS"); v != "" {
+	if v := os.Getenv("AFD_DOWNLOAD_MAX_CONNECTIONS"); v != "" {
 		if conn, err := strconv.Atoi(v); err == nil {
 			cfg.Download.MaxConnections = conn
 		} else {
-			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_DOWNLOAD_MAX_CONNECTIONS: %s\n", v)
+			fmt.Fprintf(os.Stderr, "warning: invalid AFD_DOWNLOAD_MAX_CONNECTIONS: %s\n", v)
 		}
 	}
-	if v := os.Getenv("NEXUS_DOWNLOAD_TIMEOUT"); v != "" {
+	if v := os.Getenv("AFD_DOWNLOAD_TIMEOUT"); v != "" {
 		if timeout, err := strconv.Atoi(v); err == nil {
 			cfg.Download.Timeout = time.Duration(timeout) * time.Second
 		} else {
-			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_DOWNLOAD_TIMEOUT: %s\n", v)
+			fmt.Fprintf(os.Stderr, "warning: invalid AFD_DOWNLOAD_TIMEOUT: %s\n", v)
 		}
 	}
-	if v := os.Getenv("NEXUS_DOWNLOAD_RETRY_COUNT"); v != "" {
+	if v := os.Getenv("AFD_DOWNLOAD_RETRY_COUNT"); v != "" {
 		if count, err := strconv.Atoi(v); err == nil {
 			cfg.Download.RetryCount = count
 		} else {
-			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_DOWNLOAD_RETRY_COUNT: %s\n", v)
+			fmt.Fprintf(os.Stderr, "warning: invalid AFD_DOWNLOAD_RETRY_COUNT: %s\n", v)
 		}
 	}
-	if v := os.Getenv("NEXUS_DOWNLOAD_SPEED_LIMIT"); v != "" {
+	if v := os.Getenv("AFD_DOWNLOAD_SPEED_LIMIT"); v != "" {
 		if limit, err := strconv.ParseInt(v, 10, 64); err == nil {
 			cfg.Download.SpeedLimit = limit
 		} else {
-			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_DOWNLOAD_SPEED_LIMIT: %s\n", v)
+			fmt.Fprintf(os.Stderr, "warning: invalid AFD_DOWNLOAD_SPEED_LIMIT: %s\n", v)
 		}
 	}
-	if v := os.Getenv("NEXUS_AUTO_SAVE_INTERVAL"); v != "" {
+	if v := os.Getenv("AFD_AUTO_SAVE_INTERVAL"); v != "" {
 		if interval, err := strconv.Atoi(v); err == nil {
 			cfg.AutoSaveInterval = interval
 		} else {
-			fmt.Fprintf(os.Stderr, "warning: invalid NEXUS_AUTO_SAVE_INTERVAL: %s\n", v)
+			fmt.Fprintf(os.Stderr, "warning: invalid AFD_AUTO_SAVE_INTERVAL: %s\n", v)
 		}
 	}
 }

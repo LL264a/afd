@@ -27,8 +27,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: NexusDL version
-      description: Output of `nexus-dl version`.
+      label: AFD version
+      description: Output of `afd version`.
       placeholder: "v0.1.0 (commit abcdef, built 2026-06-02T00:00:00Z)"
     validations:
       required: true
@@ -65,7 +65,7 @@ body:
     attributes:
       label: Steps to reproduce
       placeholder: |
-        1. ./nexus-dl serve
+        1. ./afd serve
         2. curl -X POST http://localhost:8080/api/tasks -d '{...}'
         3. observe ...
       validations:

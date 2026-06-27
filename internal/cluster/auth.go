@@ -188,7 +188,7 @@ func GenerateSelfSignedCert(organization, host string) (certFile, keyFile string
 func safeCertName(host string) string {
 	host = strings.TrimSpace(host)
 	if host == "" {
-		return "nexus-dl-node"
+		return "afd-node"
 	}
 	host = filepath.Base(host)
 	host = strings.ReplaceAll(host, "..", "_")
@@ -203,7 +203,7 @@ func safeCertName(host string) string {
 		return '_'
 	}, host)
 	if host == "" || host == "." || host == ".." {
-		return "nexus-dl-node"
+		return "afd-node"
 	}
 	return host
 }

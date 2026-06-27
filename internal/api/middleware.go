@@ -293,7 +293,7 @@ func Deprecation() Middleware {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Deprecation", "true")
 			w.Header().Set("Link", `</api/v1/>; rel="successor-version"`)
-			w.Header().Set("X-NexusDL-Deprecation-Notice", "Use /api/v1/ instead; this path will be removed in a future major version")
+			w.Header().Set("X-AFD-Deprecation-Notice", "Use /api/v1/ instead; this path will be removed in a future major version")
 			next.ServeHTTP(w, r)
 		})
 	}

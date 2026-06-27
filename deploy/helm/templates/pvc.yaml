@@ -2,9 +2,9 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "nexus-dl.fullname" . }}-data
+  name: {{ include "afd.fullname" . }}-data
   labels:
-    {{- include "nexus-dl.labels" . | nindent 4 }}
+    {{- include "afd.labels" . | nindent 4 }}
 spec:
   accessModes:
     {{- toYaml .Values.persistence.accessModes | nindent 4 }}
