@@ -52,6 +52,12 @@ func TestInit_FileMode(t *testing.T) {
 	if err := Init("info", f); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
+	// Lumberjack creates the file lazily on first write, so emit a log
+	// entry before checking the file mode.
+	Log.Info("trigger file creation")
+	Sync()
+	Close()
+
 	info, err := os.Stat(f)
 	if err != nil {
 		t.Fatalf("stat: %v", err)

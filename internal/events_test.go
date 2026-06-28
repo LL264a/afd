@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"os/exec"
 	"runtime"
 	"sync"
@@ -147,24 +146,13 @@ func TestCommandHandler_DoesNotPutEventInArgv(t *testing.T) {
 		t.Skip("POSIX-only")
 	}
 	sentinel := "INJECTED_ARGV_TOKEN_42"
+	// If the handler incorrectly puts the event into argv, $1 would contain
+	// the sentinel and the script exits 99. Correct behaviour passes the
+	// event via stdin only, so $1 is empty and the script exits 0.
 	h := NewCommandHandler("/bin/sh", []string{"-c", `if [ "$1" = "` + sentinel + `" ]; then exit 99; fi; cat >/dev/null; exit 0`, "arg1"})
 
 	ev := &Event{Type: EventTaskStarted, TaskID: sentinel}
-	if err := h.HandleEvent(ev); err == nil {
-		t.Fatalf("expected error from command exit 99, got nil")
-	} else {
-		if !containsAny(err.Error(), "exit", "status") {
-			t.Logf("unexpected error format: %v", err)
-		}
+	if err := h.HandleEvent(ev); err != nil {
+		t.Fatalf("expected success (event not in argv), got error: %v", err)
 	}
-}
-
-func containsAny(s string, subs ...string) bool {
-	for _, sub := range subs {
-		if bytes.Contains([]byte(s), []byte(sub)) {
-			return true
-		}
-	}
-	_ = io.Discard
-	return false
 }

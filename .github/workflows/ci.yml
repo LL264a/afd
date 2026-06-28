@@ -121,9 +121,26 @@ jobs:
       - name: Verify container starts
         run: |
           docker run -d --name afd-test -p 18080:8080 afd-ci
-          sleep 3
-          # Health check
-          curl -sf http://localhost:18080/health || { echo "Health check failed"; docker logs afd-test; exit 1; }
+          # Wait for server to be ready (up to 30s)
+          ready=false
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:18080/health >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            if ! docker ps --filter name=afd-test --filter status=running | grep -q afd-test; then
+              echo "Container exited early"
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" = "false" ]; then
+            echo "=== Health check failed after 30s ==="
+            docker logs afd-test 2>&1 || true
+            docker stop afd-test 2>/dev/null || true
+            docker rm afd-test 2>/dev/null || true
+            exit 1
+          fi
           echo "Health check passed"
           # JSON-RPC getVersion
           curl -sf -X POST http://localhost:18080/jsonrpc \
