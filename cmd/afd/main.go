@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
@@ -393,13 +394,20 @@ func doDownload(url, outputPath string, explicit bool) error {
 
 	elapsed := time.Since(startTime)
 	fileSize := d.FileSize()
+	downloaded := d.TotalDownloaded()
+	// 未知长度（fileSize==0）时用实际下载字节数计算平均速度
+	speedBase := fileSize
+	if speedBase <= 0 {
+		speedBase = downloaded
+	}
 	var avgSpeed int64
 	if elapsed.Seconds() > 0 {
-		avgSpeed = int64(float64(fileSize) / elapsed.Seconds())
+		avgSpeed = int64(float64(speedBase) / elapsed.Seconds())
 	}
 	log.Infow("download finished",
 		"elapsed", elapsed.Round(time.Second).String(),
 		"file_size", formatBytes(fileSize),
+		"downloaded", formatBytes(downloaded),
 		"avg_speed", fmt.Sprintf("%s/s", formatBytes(avgSpeed)))
 
 	return nil
@@ -517,13 +525,14 @@ func inferFilename(rawURL string) (string, bool) {
 	if err != nil {
 		// 回退到 filepath.Base
 		name := filepath.Base(rawURL)
-		if name == "." || name == "/" || name == "" {
+		if name == "." || name == "/" || name == "" || name == "\\" {
 			return "index.html", true
 		}
 		return sanitizeFilename(name), true
 	}
-	// 只取路径部分（剥离查询参数）
-	name := filepath.Base(u.Path)
+	// URL 路径始终使用 '/' 分隔符，用 path.Base（非 filepath.Base）
+	// 避免在 Windows 上把 '/' 误判为分隔符返回 '\'
+	name := path.Base(u.Path)
 	if name == "." || name == "/" || name == "" {
 		return "index.html", true
 	}

@@ -1000,6 +1000,11 @@ func (d *Downloader) headRequest(ctx context.Context) (int64, bool, error) {
 
 	supportsRange := resp.Header.Get("Accept-Ranges") == "bytes"
 	fileSize := resp.ContentLength
+	// HEAD 返回 Content-Length < 0（未知/chunked）时归一化为 0，
+	// 避免 -1 污染日志和进度显示；doDownload 会将 fileSize<=0 路由到单线程流式下载。
+	if fileSize < 0 {
+		fileSize = 0
+	}
 
 	return fileSize, supportsRange, nil
 }
