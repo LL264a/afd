@@ -147,6 +147,10 @@ jobs:
           if [ "$ready" = "false" ]; then
             echo "=== Health check failed after 30s ==="
             docker logs afd-test 2>&1 || true
+            # Surface key log lines as annotations for diagnostics
+            docker logs afd-test 2>&1 | grep -iE "error|panic|fatal|fail|invalid" | head -10 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
             docker stop afd-test 2>/dev/null || true
             docker rm afd-test 2>/dev/null || true
             exit 1
@@ -193,6 +197,10 @@ jobs:
               echo "Server process exited unexpectedly after ${i}s"
               echo "=== Serve log ==="
               cat /tmp/afd-serve.log
+              # Surface key log lines as annotations for diagnostics
+              grep -iE "error|panic|fatal|fail|invalid" /tmp/afd-serve.log 2>/dev/null | head -10 | while IFS= read -r line; do
+                echo "::error::$line"
+              done
               exit 1
             fi
             sleep 1
@@ -201,6 +209,9 @@ jobs:
             echo "Server not responding after 20s"
             echo "=== Serve log ==="
             cat /tmp/afd-serve.log
+            grep -iE "error|panic|fatal|fail|invalid" /tmp/afd-serve.log 2>/dev/null | head -10 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
             exit 1
           fi
       - name: Test health endpoint

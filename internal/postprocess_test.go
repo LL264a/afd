@@ -123,11 +123,14 @@ func TestExtractZipPathTraversal(t *testing.T) {
 	destDir := filepath.Join(tmpDir, "extracted")
 	os.MkdirAll(destDir, 0755)
 
-	// 创建包含路径遍历的 zip
+	// Use a unique sentinel name so the test does not depend on
+	// system files like /etc/passwd that already exist on Linux.
+	sentinel := "afd_traversal_sentinel_42"
+
 	zipFile, _ := os.Create(zipPath)
 	zw := zip.NewWriter(zipFile)
 
-	w, _ := zw.Create("../../../etc/passwd")
+	w, _ := zw.Create("../../../" + sentinel)
 	w.Write([]byte("evil"))
 
 	zw.Close()
@@ -136,10 +139,17 @@ func TestExtractZipPathTraversal(t *testing.T) {
 	pp := NewPostProcessor(nil)
 	_ = pp.ExtractArchive(zipPath, destDir)
 
-	// 验证路径遍历被阻止
-	_, err := os.ReadFile(filepath.Join(tmpDir, "..", "..", "..", "etc", "passwd"))
-	if err == nil {
-		t.Error("path traversal was not blocked")
+	// If path traversal was not blocked, the sentinel file would
+	// exist 3 levels above tmpDir. It must NOT exist.
+	target := filepath.Join(tmpDir, "..", "..", "..", sentinel)
+	if _, err := os.Stat(target); err == nil {
+		t.Errorf("path traversal was not blocked: %s exists", target)
+	}
+
+	// And destDir should be empty (the only entry was blocked).
+	entries, _ := os.ReadDir(destDir)
+	if len(entries) != 0 {
+		t.Errorf("destDir should be empty, got %d entries", len(entries))
 	}
 }
 
