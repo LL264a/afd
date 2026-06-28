@@ -833,7 +833,7 @@ func toString(v any) string {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "配置文件路径")
+	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "配置文件路径")
 	rootCmd.PersistentFlags().StringVar(&rpcAddr, "addr", "http://localhost:6800/jsonrpc", "RPC 服务器地址")
 	rootCmd.PersistentFlags().StringVar(&rpcToken, "token", "", "RPC 认证 token")
 
