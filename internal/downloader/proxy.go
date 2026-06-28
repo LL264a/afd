@@ -188,7 +188,6 @@ func NewHTTPProxyClient(proxyCfg *config.ProxyConfig, timeout time.Duration, use
 	}
 
 	return &http.Client{
-		Timeout:   timeout,
 		Transport: transport,
 	}, nil
 }
@@ -226,7 +225,6 @@ func CreateSOCKS5ProxyClient(proxyCfg *config.ProxyConfig, timeout time.Duration
 	}
 
 	return &http.Client{
-		Timeout:   timeout,
 		Transport: transport,
 	}, nil
 }
@@ -258,7 +256,6 @@ func CreateSOCKS4ProxyClient(proxyCfg *config.ProxyConfig, timeout time.Duration
 	}
 
 	return &http.Client{
-		Timeout:   timeout,
 		Transport: transport,
 	}, nil
 }
@@ -333,7 +330,7 @@ func (d *socks4Dialer) Dial(network, addr string) (net.Conn, error) {
 
 func CreateProxyClient(proxyCfg *config.ProxyConfig, timeout time.Duration, useDigest bool, excludeList []string) (*http.Client, error) {
 	if proxyCfg == nil || !proxyCfg.IsValid() {
-		return &http.Client{Timeout: timeout}, nil
+		return &http.Client{}, nil
 	}
 
 	switch proxyCfg.Type {

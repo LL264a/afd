@@ -92,6 +92,9 @@ func (m *MetalinkDownloader) SetRetryConfig(cfg RetryConfig)         {}
 func (m *MetalinkDownloader) GetRetryConfig() RetryConfig            { return RetryConfig{} }
 func (m *MetalinkDownloader) LoadProgress(ctx context.Context) error { return nil }
 func (m *MetalinkDownloader) SaveProgress() error                    { return nil }
+func (m *MetalinkDownloader) ContentDisposition() string {
+	return ""
+}
 
 func (m *MetalinkDownloader) parse() error {
 	m.mu.Lock()

@@ -167,6 +167,10 @@ func (d *TorrentDownloader) SaveProgress() error {
 	return nil
 }
 
+func (d *TorrentDownloader) ContentDisposition() string {
+	return ""
+}
+
 func createTorrentClient(cfg *BTConfig) (*torrent.Client, error) {
 	cfgDir := cfg.DataDir
 	if cfgDir == "" {

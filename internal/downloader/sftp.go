@@ -203,6 +203,7 @@ func (d *SFTPDownloader) SetRetryConfig(config RetryConfig)      { d.retryConfig
 func (d *SFTPDownloader) GetRetryConfig() RetryConfig            { return d.retryConfig }
 func (d *SFTPDownloader) LoadProgress(ctx context.Context) error { return nil }
 func (d *SFTPDownloader) SaveProgress() error                    { return nil }
+func (d *SFTPDownloader) ContentDisposition() string             { return "" }
 
 // Close 释放 SFTPDownloader 持有的底层资源，包括 SSH agent 连接。
 func (d *SFTPDownloader) Close() error {

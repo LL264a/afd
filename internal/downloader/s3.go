@@ -354,6 +354,10 @@ func (d *S3Downloader) SaveProgress() error {
 	return nil
 }
 
+func (d *S3Downloader) ContentDisposition() string {
+	return ""
+}
+
 type S3ProtocolHandler struct {
 	logger *zap.SugaredLogger
 	cfg    *config.DownloadConfig

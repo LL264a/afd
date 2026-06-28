@@ -437,6 +437,10 @@ func (d *WebDAVDownloader) SaveProgress() error {
 	return nil
 }
 
+func (d *WebDAVDownloader) ContentDisposition() string {
+	return ""
+}
+
 type WebDAVProtocolHandler struct {
 	logger *zap.SugaredLogger
 	cfg    *config.DownloadConfig

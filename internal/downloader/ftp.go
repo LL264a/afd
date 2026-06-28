@@ -852,6 +852,10 @@ func (d *FTPDownloader) SaveProgress() error {
 	return nil
 }
 
+func (d *FTPDownloader) ContentDisposition() string {
+	return ""
+}
+
 type FTPProtocolHandler struct {
 	logger *zap.SugaredLogger
 	cfg    *config.DownloadConfig

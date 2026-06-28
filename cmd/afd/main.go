@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -61,7 +63,7 @@ It supports HTTP, FTP, BitTorrent, S3, WebDAV, and more.
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// 没有子命令时，直接当作下载处理
 		if len(args) > 0 {
-			return doDownload(args[0], output)
+			return doDownload(args[0], output, explicitOutput)
 		}
 		return cmd.Help()
 	},
@@ -130,6 +132,7 @@ var statusCmd = &cobra.Command{
 var (
 	parallel            int
 	output              string
+	explicitOutput      bool // -o 是否被显式指定
 	speedLimit          string
 	timeout             int
 	inputFile           string
@@ -142,6 +145,10 @@ var (
 	streamPieceSelector string
 	uriSelector         string
 )
+
+// errInterrupted 表示用户通过 SIGINT/SIGTERM 中断下载。
+// main() 将其映射为 exit code 130（128+SIGINT），与 wget 行为一致。
+var errInterrupted = errors.New("download interrupted by user")
 
 var downloadCmd = &cobra.Command{
 	Use:   "dl <url>",
@@ -166,26 +173,39 @@ var downloadCmd = &cobra.Command{
 			return cmd.Help()
 		}
 
-		url := args[0]
+		rawURL := args[0]
+		// 自动补全 URL scheme（对标 wget/curl：无 scheme 时默认 http://）
+		if !strings.Contains(rawURL, "://") {
+			// 跳过已经是 scheme: 形式的（如 file:, data:, magnet:）
+			if !strings.Contains(rawURL, ":") || looksLikeHostPort(rawURL) {
+				rawURL = "http://" + rawURL
+			}
+		}
+
 		outPath := output
+		explicit := explicitOutput
 
 		if outPath == "" && len(args) > 1 {
 			outPath = args[1]
-		}
-
-		if outPath == "" && dir != "" {
-			outPath = filepath.Join(dir, filepath.Base(url))
+			explicit = true
 		}
 
 		if outPath == "" {
-			outPath = filepath.Base(url)
+			// 从 URL 路径推断文件名（剥离查询参数）
+			if name, ok := inferFilename(rawURL); ok {
+				if dir != "" {
+					outPath = filepath.Join(dir, name)
+				} else {
+					outPath = name
+				}
+			}
 		}
 
 		if outPath == "" || strings.HasPrefix(outPath, "-") {
 			return fmt.Errorf("请指定输出文件路径: -o <path>")
 		}
 
-		return doDownload(url, outPath)
+		return doDownload(rawURL, outPath, explicit)
 	},
 }
 
@@ -205,7 +225,7 @@ func printBanner() {
 	fmt.Println(strings.Repeat("=", 50))
 }
 
-func doDownload(url, outputPath string) error {
+func doDownload(url, outputPath string, explicit bool) error {
 	cfg := config.DefaultDownloadConfig()
 
 	if speedLimit != "" {
@@ -342,7 +362,8 @@ func doDownload(url, outputPath string) error {
 			log.Infow("download cancelled")
 			signal.Stop(sigCh)
 			cancel()
-			return nil
+			// 用户中断返回 130（128+SIGINT），让 shell 脚本能区分
+			return errInterrupted
 		}
 		signal.Stop(sigCh)
 		cancel()
@@ -350,6 +371,25 @@ func doDownload(url, outputPath string) error {
 	}
 	signal.Stop(sigCh)
 	cancel()
+
+	// Content-Disposition 重命名：若 -o 未显式指定，用服务器建议的文件名
+	if !explicit {
+		if cd := d.ContentDisposition(); cd != "" {
+			if name := downloader.ParseContentDispositionFilename(cd); name != "" {
+				name = sanitizeFilename(name)
+				dir := filepath.Dir(outputPath)
+				newPath := filepath.Join(dir, name)
+				if newPath != outputPath {
+					if _, e := os.Stat(newPath); os.IsNotExist(e) {
+						if e := os.Rename(outputPath, newPath); e == nil {
+							log.Infow("renamed output per Content-Disposition", "from", outputPath, "to", newPath)
+							outputPath = newPath
+						}
+					}
+				}
+			}
+		}
+	}
 
 	elapsed := time.Since(startTime)
 	fileSize := d.FileSize()
@@ -426,7 +466,7 @@ func doBatchDownload(inputFile string) error {
 			outPath = filepath.Join(currentDir, outPath)
 		}
 
-		if err := doDownload(url, outPath); err != nil {
+		if err := doDownload(url, outPath, true); err != nil {
 			fmt.Printf("下载失败: %v\n", err)
 			failed++
 		} else {
@@ -451,6 +491,54 @@ func formatBytes(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// looksLikeHostPort 判断 "host:port" 形式（避免误判为 scheme:）。
+func looksLikeHostPort(s string) bool {
+	idx := strings.LastIndex(s, ":")
+	if idx < 0 {
+		return false
+	}
+	// 冒号后全是数字 → host:port
+	tail := s[idx+1:]
+	for _, r := range tail {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// inferFilename 从 URL 路径推断输出文件名。
+// 尾斜杠 URL（如 http://example.com/）返回 ("index.html", true)。
+// 无法推断时返回 ("", false)。
+func inferFilename(rawURL string) (string, bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		// 回退到 filepath.Base
+		name := filepath.Base(rawURL)
+		if name == "." || name == "/" || name == "" {
+			return "index.html", true
+		}
+		return sanitizeFilename(name), true
+	}
+	// 只取路径部分（剥离查询参数）
+	name := filepath.Base(u.Path)
+	if name == "." || name == "/" || name == "" {
+		return "index.html", true
+	}
+	return sanitizeFilename(name), true
+}
+
+// sanitizeFilename 替换文件系统非法字符。
+func sanitizeFilename(name string) string {
+	// 替换 Windows 和 Unix 非法字符
+	repl := strings.NewReplacer(
+		"\\", "_", "/", "_", ":", "_",
+		"*", "_", "?", "_", "\"", "_",
+		"<", "_", ">", "_", "|", "_",
+	)
+	return repl.Replace(name)
 }
 
 // isTerminal 检测文件描述符是否连接到终端（非 TTY 环境如 journald 回退到日志输出）。
@@ -913,6 +1001,11 @@ func init() {
 
 	downloadCmd.Flags().IntVarP(&parallel, "split", "s", 0, "下载线程数")
 	downloadCmd.Flags().StringVarP(&output, "output", "o", "", "输出文件路径")
+	// 标记 -o 是否被显式指定（用于 Content-Disposition 重命名决策）
+	downloadCmd.Flags().Lookup("output").NoOptDefVal = "" // 确保 -o 需要参数
+	downloadCmd.PreRun = func(cmd *cobra.Command, args []string) {
+		explicitOutput = cmd.Flags().Changed("output")
+	}
 	downloadCmd.Flags().StringVar(&speedLimit, "speed-limit", "", "速度限制 (例如: 1M, 500K)")
 	downloadCmd.Flags().IntVar(&timeout, "timeout", 0, "超时时间 (秒)")
 	downloadCmd.Flags().StringVarP(&inputFile, "input-file", "i", "", "批量下载文件 (每行一个URL)")
@@ -930,6 +1023,10 @@ func init() {
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
+		// 用户中断（SIGINT/SIGTERM）返回 130（128+SIGINT），与 wget 一致
+		if errors.Is(err, errInterrupted) {
+			os.Exit(130)
+		}
 		os.Exit(1)
 	}
 }

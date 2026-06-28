@@ -29,6 +29,10 @@ import (
 // errNotModified 表示服务器返回 304 Not Modified，文件未修改
 var errNotModified = errors.New("resource not modified")
 
+// errRangeNotSupported 服务器对 Range 请求返回 200 或 416，
+// 多线程分片策略无法继续，调用方应回退到单线程完整下载。
+var errRangeNotSupported = errors.New("server does not support range requests; fall back to single-thread")
+
 const (
 	defaultFileMode os.FileMode = 0644
 	defaultDirMode  os.FileMode = 0755
@@ -55,6 +59,8 @@ type Downloader struct {
 	conditionalGet bool   // 是否启用条件下载
 	lastModified   string // 上次下载的 Last-Modified
 	etag           string // 上次下载的 ETag
+
+	contentDisposition string // 服务器返回的 Content-Disposition 头
 
 	speedWindow []speedSample
 	swHead      int
@@ -112,7 +118,7 @@ func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downl
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		ForceAttemptHTTP2:      false,
+		ForceAttemptHTTP2:      true,
 		DisableCompression:     false,
 		DisableKeepAlives:      false,
 		ReadBufferSize:         32 * 1024,
@@ -122,7 +128,10 @@ func NewDownloader(cfg *config.DownloadConfig, logger *zap.SugaredLogger) *Downl
 
 	// 跳过 TLS 证书验证
 	if cfg.Insecure {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		transport.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true,
+			MinVersion:         tls.VersionTLS12,
+		}
 	}
 
 	client := &http.Client{
@@ -212,6 +221,7 @@ type DownloaderInterface interface {
 	GetRetryConfig() RetryConfig
 	LoadProgress(ctx context.Context) error
 	SaveProgress() error
+	ContentDisposition() string
 }
 
 func NewDownloaderFromURL(url, outputPath string, cfg *config.DownloadConfig, logger *zap.SugaredLogger) (DownloaderInterface, error) {
@@ -857,6 +867,23 @@ func (d *Downloader) doDownload(ctx context.Context) error {
 
 	if downloadErr != nil {
 		d.saveProgressOrLog()
+		// 服务器不支持 Range（返回 200 或 416）：回退到单线程完整下载
+		if errors.Is(downloadErr, errRangeNotSupported) {
+			d.logger.Warnw("server does not support range requests, falling back to single-thread download")
+			// 重置进度状态
+			d.cfMu.Lock()
+			if d.controlFile != nil {
+				d.controlFile.CompletedLength = 0
+				d.controlFile.PieceBitfields = nil
+			}
+			d.cfMu.Unlock()
+			atomic.StoreInt64(&d.totalDownloaded, 0)
+			// 截断可能已写入的部分数据
+			if err := os.Truncate(d.outputPath, 0); err != nil {
+				d.logger.Warnw("failed to truncate partial file", "error", err)
+			}
+			return d.singleThreadDownload(ctx)
+		}
 		return downloadErr
 	}
 
@@ -936,6 +963,11 @@ func (d *Downloader) headRequest(ctx context.Context) (int64, bool, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// 4xx/5xx 直接报错（不回退 GET，避免浪费请求）
+		if resp.StatusCode >= 400 {
+			return 0, false, fmt.Errorf("HTTP %d %s", resp.StatusCode, resp.Status)
+		}
+		// 3xx 或其他非 200 状态：回退到 GET 探测
 		d.logger.Warnw("HEAD request returned non-200, falling back to GET", "status", resp.StatusCode)
 		return d.getSizeViaGet(ctx)
 	}
@@ -943,6 +975,10 @@ func (d *Downloader) headRequest(ctx context.Context) (int64, bool, error) {
 	// 捕获 Last-Modified 用于 remote-time 和条件下载
 	if lm := resp.Header.Get("Last-Modified"); lm != "" {
 		d.lastModified = lm
+	}
+	// 捕获 Content-Disposition 用于文件名推断
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		d.contentDisposition = cd
 	}
 	// ETag 仅在条件下载时捕获
 	if d.conditionalGet {
@@ -974,6 +1010,10 @@ func (d *Downloader) getSizeViaGet(ctx context.Context) (int64, bool, error) {
 	if lm := resp.Header.Get("Last-Modified"); lm != "" {
 		d.lastModified = lm
 	}
+	// 捕获 Content-Disposition 用于文件名推断
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		d.contentDisposition = cd
+	}
 
 	if resp.StatusCode == http.StatusPartialContent {
 		contentRange := resp.Header.Get("Content-Range")
@@ -986,19 +1026,21 @@ func (d *Downloader) getSizeViaGet(ctx context.Context) (int64, bool, error) {
 			}
 		}
 		if resp.ContentLength < 0 {
-			return 0, false, fmt.Errorf("unknown content length")
+			// 无 Content-Length 但服务器支持 Range：返回 0 表示未知大小，走单线程流式
+			return 0, true, nil
 		}
 		return resp.ContentLength + 1, true, nil
 	}
 
 	if resp.StatusCode == http.StatusOK {
 		if resp.ContentLength < 0 {
-			return 0, false, fmt.Errorf("unknown content length")
+			// chunked 传输编码或未知大小：返回 0 走单线程流式下载
+			return 0, false, nil
 		}
 		return resp.ContentLength, false, nil
 	}
 
-	return 0, false, fmt.Errorf("get request returned status: %d", resp.StatusCode)
+	return 0, false, fmt.Errorf("get request returned status: %d %s", resp.StatusCode, resp.Status)
 }
 
 // downloadPiece 下载一个 Piece，使用 block 级别追踪完成状态
@@ -1168,13 +1210,22 @@ func (d *Downloader) downloadPieceOnceFromURL(ctx context.Context, file *os.File
 		if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
 			resp.Body.Close()
 			piece.CancelBlock(piece.BlockIndexForOffset(blockOffset))
-			return fmt.Errorf("server does not support range requests (416)")
+			// 416: 服务器不支持 Range，触发单线程回退
+			return errRangeNotSupported
 		}
 
-		if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusOK {
+			// 服务器忽略了 Range 头，返回完整文件。
+			// 若继续按分片偏移写入会损坏文件，因此触发单线程回退。
 			resp.Body.Close()
 			piece.CancelBlock(piece.BlockIndexForOffset(blockOffset))
-			return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+			return errRangeNotSupported
+		}
+
+		if resp.StatusCode != http.StatusPartialContent {
+			resp.Body.Close()
+			piece.CancelBlock(piece.BlockIndexForOffset(blockOffset))
+			return fmt.Errorf("unexpected status code: %d %s", resp.StatusCode, resp.Status)
 		}
 
 		// 低速检测状态
@@ -1403,11 +1454,16 @@ func (d *Downloader) downloadRangeOnceFromURL(ctx context.Context, file *os.File
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
-		return fmt.Errorf("server does not support range requests (416)")
+		return errRangeNotSupported
 	}
 
-	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	if resp.StatusCode == http.StatusOK {
+		// 服务器忽略 Range 头返回完整文件，触发单线程回退
+		return errRangeNotSupported
+	}
+
+	if resp.StatusCode != http.StatusPartialContent {
+		return fmt.Errorf("unexpected status code: %d %s", resp.StatusCode, resp.Status)
 	}
 
 	buf := make([]byte, d.cfg.BufferSize)
@@ -1619,7 +1675,7 @@ func (d *Downloader) singleThreadDownload(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return fmt.Errorf("unexpected status code: %d %s", resp.StatusCode, resp.Status)
 	}
 
 	outputDir := filepath.Dir(d.outputPath)
@@ -1728,8 +1784,67 @@ func (d *Downloader) singleThreadResume(ctx context.Context, existingSize int64)
 		return d.singleThreadDownload(ctx)
 	}
 
-	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	if resp.StatusCode == http.StatusOK {
+		// 服务器忽略 Range 头返回完整文件：截断本地文件从头写入
+		d.logger.Warnw("server returned 200 instead of 206, restarting from beginning")
+		d.cfMu.Lock()
+		if d.controlFile != nil {
+			d.controlFile.CompletedLength = 0
+			d.controlFile.PieceBitfields = nil
+		}
+		d.cfMu.Unlock()
+		atomic.StoreInt64(&d.totalDownloaded, 0)
+		// 覆盖写入模式：打开文件时截断
+		file, err := os.OpenFile(d.outputPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, defaultFileMode)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		done := make(chan struct{})
+		var doneOnce sync.Once
+		defer doneOnce.Do(func() { close(done) })
+		go d.periodicSaveProgress(ctx, done)
+
+		buf := make([]byte, d.cfg.BufferSize)
+		for {
+			select {
+			case <-ctx.Done():
+				d.saveProgressOrLog()
+				return ctx.Err()
+			default:
+			}
+			n, readErr := resp.Body.Read(buf)
+			if n > 0 {
+				if rl := d.getRateLimiter(); rl != nil {
+					if err := rl.Wait(ctx, int64(n)); err != nil {
+						d.saveProgressOrLog()
+						return err
+					}
+				}
+				if _, writeErr := file.Write(buf[:n]); writeErr != nil {
+					return fmt.Errorf("write: %w", writeErr)
+				}
+				atomic.AddInt64(&d.totalDownloaded, int64(n))
+				if d.recordSpeedAndCheckSave(int64(n)) {
+					d.saveProgressOrLog()
+				}
+			}
+			if readErr != nil {
+				if readErr == io.EOF {
+					break
+				}
+				d.saveProgressOrLog()
+				return fmt.Errorf("read: %w", readErr)
+			}
+		}
+		d.saveProgressOrLog()
+		d.applyRemoteTime()
+		return nil
+	}
+
+	if resp.StatusCode != http.StatusPartialContent {
+		return fmt.Errorf("unexpected status code: %d %s", resp.StatusCode, resp.Status)
 	}
 
 	file, err := os.OpenFile(d.outputPath, os.O_CREATE|os.O_RDWR, defaultFileMode)
@@ -1938,6 +2053,47 @@ func (d *Downloader) GetAltURLs() []string {
 	d.altURLsMu.Lock()
 	defer d.altURLsMu.Unlock()
 	return d.altURLs
+}
+
+// ContentDisposition 返回服务器响应的 Content-Disposition 头（可能为空）。
+func (d *Downloader) ContentDisposition() string {
+	return d.contentDisposition
+}
+
+// ParseContentDispositionFilename 从 Content-Disposition 头解析 filename 参数。
+// 支持 filename= 和 filename*= (RFC 5987) 两种形式。
+func ParseContentDispositionFilename(cd string) string {
+	if cd == "" {
+		return ""
+	}
+	// 优先尝试 RFC 5987 的 filename*=UTF-8''<percent-encoded>
+	if idx := strings.Index(strings.ToLower(cd), "filename*="); idx >= 0 {
+		val := cd[idx+len("filename*="):]
+		// 截取到下一个分号或末尾
+		if semi := strings.Index(val, ";"); semi >= 0 {
+			val = val[:semi]
+		}
+		val = strings.Trim(val, "\"")
+		// 格式: charset'language'value
+		parts := strings.SplitN(val, "'", 3)
+		if len(parts) == 3 {
+			// 对 percent-encoded 值解码
+			if dec, err := url.PathUnescape(parts[2]); err == nil {
+				return dec
+			}
+			return parts[2]
+		}
+		return val
+	}
+	// 回退到普通 filename=
+	if idx := strings.Index(strings.ToLower(cd), "filename="); idx >= 0 {
+		val := cd[idx+len("filename="):]
+		if semi := strings.Index(val, ";"); semi >= 0 {
+			val = val[:semi]
+		}
+		return strings.Trim(val, "\"")
+	}
+	return ""
 }
 
 func (d *Downloader) getAltURLs() []string {
