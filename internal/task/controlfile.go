@@ -13,19 +13,19 @@ import (
 )
 
 type ControlFile struct {
-	InfoHash        string                   `json:"infohash"`
-	TotalLength     int64                    `json:"totalLength"`
-	CompletedLength int64                    `json:"completedLength"`
-	PieceLength     int64                    `json:"pieceLength"`
-	Pieces          string                   `json:"pieces"`
-	Bitfield        string                   `json:"bitfield"`
-	NumPieces       int                      `json:"numPieces"`
-	PieceBitfields  []PieceBitfieldEntry     `json:"pieceBitfields,omitempty"`
-	CreatedAt       time.Time                `json:"createdAt"`
-	UpdatedAt       time.Time                `json:"updatedAt"`
-	Status          string                   `json:"status"`
-	LastModified    string                   `json:"lastModified,omitempty"`
-	ETag            string                   `json:"etag,omitempty"`
+	InfoHash        string               `json:"infohash"`
+	TotalLength     int64                `json:"totalLength"`
+	CompletedLength int64                `json:"completedLength"`
+	PieceLength     int64                `json:"pieceLength"`
+	Pieces          string               `json:"pieces"`
+	Bitfield        string               `json:"bitfield"`
+	NumPieces       int                  `json:"numPieces"`
+	PieceBitfields  []PieceBitfieldEntry `json:"pieceBitfields,omitempty"`
+	CreatedAt       time.Time            `json:"createdAt"`
+	UpdatedAt       time.Time            `json:"updatedAt"`
+	Status          string               `json:"status"`
+	LastModified    string               `json:"lastModified,omitempty"`
+	ETag            string               `json:"etag,omitempty"`
 }
 
 // PieceBitfieldEntry 保存单个 Piece 的 Block 级完成位图

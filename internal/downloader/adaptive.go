@@ -26,9 +26,9 @@ type adaptiveController struct {
 	lastCheckBytes int64
 	lastCheckTime  time.Time
 
-	speedThresholdLow  int64
-	speedImproveRatio float64
-	adjustInterval    time.Duration
+	speedThresholdLow    int64
+	speedImproveRatio    float64
+	adjustInterval       time.Duration
 	lastAdjustTimeAtomic int64 // atomic, 纳秒时间戳
 }
 

@@ -25,12 +25,12 @@ const (
 
 // Piece 对应文件的一个区间，内部由 Block 位图追踪
 type Piece struct {
-	Index    int
-	Start    int64 // 文件内绝对偏移
-	Length   int64 // Piece 总长度
-	status   PieceStatus
-	blocks   *BitfieldMan
-	mu       sync.Mutex
+	Index     int
+	Start     int64 // 文件内绝对偏移
+	Length    int64 // Piece 总长度
+	status    PieceStatus
+	blocks    *BitfieldMan
+	mu        sync.Mutex
 	ownerCUID int64 // 当前下载此 Piece 的 goroutine ID（用于 segment stealing）
 }
 
@@ -188,12 +188,12 @@ func (p *Piece) SetStatus(s PieceStatus) {
 
 // BitfieldMan 位图管理器，追踪 Block 级完成状态
 type BitfieldMan struct {
-	numBlocks       int
-	blockLength     int64
-	totalLength     int64
-	bitfield        []byte // 完成位图
-	useBitfield     []byte // 占用位图（防止多个 goroutine 下载同一个 block）
-	completedCount  int    // 已完成的 block 数量（O(1) 判断是否全部完成）
+	numBlocks      int
+	blockLength    int64
+	totalLength    int64
+	bitfield       []byte // 完成位图
+	useBitfield    []byte // 占用位图（防止多个 goroutine 下载同一个 block）
+	completedCount int    // 已完成的 block 数量（O(1) 判断是否全部完成）
 }
 
 func NewBitfieldMan(numBlocks int, blockLength, totalLength int64) *BitfieldMan {
@@ -207,7 +207,7 @@ func NewBitfieldMan(numBlocks int, blockLength, totalLength int64) *BitfieldMan 
 	}
 }
 
-func (b *BitfieldMan) NumBlocks() int      { return b.numBlocks }
+func (b *BitfieldMan) NumBlocks() int { return b.numBlocks }
 func (b *BitfieldMan) BlockLength(idx int) int64 {
 	if idx == b.numBlocks-1 {
 		// 最后一个 block 可能较短
@@ -626,7 +626,6 @@ func (pm *PieceManager) RestorePieceBitfields(entries []task.PieceBitfieldEntry)
 		p.mu.Unlock()
 	}
 }
-
 
 // 保留旧的 Chunk 类型以兼容 singleThreadDownload
 type ChunkStatus int

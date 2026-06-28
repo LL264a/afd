@@ -27,10 +27,10 @@ const (
 )
 
 type Event struct {
-	Type      EventType              `json:"type"`
-	TaskID    string                 `json:"task_id"`
+	Type      EventType      `json:"type"`
+	TaskID    string         `json:"task_id"`
 	Data      map[string]any `json:"data"`
-	Timestamp time.Time              `json:"timestamp"`
+	Timestamp time.Time      `json:"timestamp"`
 }
 
 type EventHandler interface {

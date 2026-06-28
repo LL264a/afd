@@ -150,17 +150,25 @@ jobs:
       - name: Start serve mode
         run: |
           mkdir -p /tmp/afd-data
-          AFD_NODE_DATA_DIR=/tmp/afd-data ./afd serve -c config.yaml &
+          AFD_NODE_DATA_DIR=/tmp/afd-data ./afd serve -c config.yaml 2>&1 | tee /tmp/afd-serve.log &
           AFD_PID=$!
           echo "AFD_PID=$AFD_PID" >> $GITHUB_ENV
           # Wait for server to be ready
-          for i in $(seq 1 10); do
+          for i in $(seq 1 15); do
             if curl -sf http://localhost:8080/health; then
               echo "Server is ready"
               break
             fi
+            # Check if process is still alive
+            if ! kill -0 $AFD_PID 2>/dev/null; then
+              echo "Server process exited unexpectedly"
+              cat /tmp/afd-serve.log
+              exit 1
+            fi
             sleep 1
           done
+          # Final check
+          curl -sf http://localhost:8080/health || { echo "Server not responding after 15s"; cat /tmp/afd-serve.log; exit 1; }
       - name: Test health endpoint
         run: |
           resp=$(curl -sf http://localhost:8080/health)
@@ -206,3 +214,5 @@ jobs:
             kill $AFD_PID || true
             wait $AFD_PID 2>/dev/null || true
           fi
+          echo "=== Serve log ==="
+          cat /tmp/afd-serve.log 2>/dev/null || echo "No log file"

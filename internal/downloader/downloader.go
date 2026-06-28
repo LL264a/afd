@@ -32,7 +32,7 @@ var errNotModified = errors.New("resource not modified")
 const (
 	defaultFileMode os.FileMode = 0644
 	defaultDirMode  os.FileMode = 0755
-	userAgent       = "AFD/0.3"
+	userAgent                   = "AFD/0.3"
 )
 
 type Downloader struct {
