@@ -14,7 +14,7 @@ env:
 
 jobs:
   lint:
-    name: Lint
+    name: Lint & Vet
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,9 +24,16 @@ jobs:
           cache: true
       - name: go vet
         run: go vet ./...
+      - name: gofmt check
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "::error::Files need gofmt:"
+            gofmt -l .
+            exit 1
+          fi
 
-  build:
-    name: Build
+  test:
+    name: Unit Tests
     runs-on: ubuntu-latest
     env:
       CGO_ENABLED: '0'
@@ -36,5 +43,166 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - name: build
+      - name: Run tests
+        run: go test ./... -count=1 -timeout 120s -v
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Run integration tests
+        run: go test -tags=integration ./test/integration/... -count=1 -timeout 120s -v
+
+  build:
+    name: Build (Linux)
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Build amd64
+        run: |
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" ./cmd/afd
+          file afd
+          ls -lh afd
+      - name: Verify binary runs
+        run: ./afd --version
+
+  cross-compile:
+    name: Cross Compile
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: "386"
+          - goos: linux
+            goarch: arm
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    env:
+      CGO_ENABLED: '0'
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Cross compile
         run: go build -trimpath -ldflags="-s -w" ./cmd/afd
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t afd-ci .
+      - name: Verify container starts
+        run: |
+          docker run -d --name afd-test -p 18080:8080 afd-ci
+          sleep 3
+          # Health check
+          curl -sf http://localhost:18080/health || { echo "Health check failed"; docker logs afd-test; exit 1; }
+          echo "Health check passed"
+          # JSON-RPC getVersion
+          curl -sf -X POST http://localhost:18080/jsonrpc \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"aria2.getVersion","params":[],"id":1}' \
+            | grep -o '"version":"[^"]*"' || { echo "RPC check failed"; docker logs afd-test; exit 1; }
+          echo "RPC check passed"
+          docker stop afd-test
+          docker rm afd-test
+
+  smoke:
+    name: Smoke Test (Serve + API)
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Build binary
+        run: go build -trimpath -ldflags="-s -w" -o afd ./cmd/afd
+      - name: Start serve mode
+        run: |
+          mkdir -p /tmp/afd-data
+          AFD_NODE_DATA_DIR=/tmp/afd-data ./afd serve -c config.yaml &
+          AFD_PID=$!
+          echo "AFD_PID=$AFD_PID" >> $GITHUB_ENV
+          # Wait for server to be ready
+          for i in $(seq 1 10); do
+            if curl -sf http://localhost:8080/health; then
+              echo "Server is ready"
+              break
+            fi
+            sleep 1
+          done
+      - name: Test health endpoint
+        run: |
+          resp=$(curl -sf http://localhost:8080/health)
+          echo "Health: $resp"
+      - name: Test metrics endpoint
+        run: |
+          resp=$(curl -sf http://localhost:8080/metrics | head -5)
+          echo "Metrics (first 5 lines): $resp"
+      - name: Test JSON-RPC getVersion
+        run: |
+          resp=$(curl -sf -X POST http://localhost:8080/jsonrpc \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"aria2.getVersion","params":[],"id":1}')
+          echo "getVersion: $resp"
+          echo "$resp" | jq -e '.result.version' || { echo "No version in response"; exit 1; }
+      - name: Test JSON-RPC getGlobalStat
+        run: |
+          resp=$(curl -sf -X POST http://localhost:8080/jsonrpc \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"aria2.getGlobalStat","params":[],"id":2}')
+          echo "getGlobalStat: $resp"
+      - name: Test JSON-RPC listMethods
+        run: |
+          resp=$(curl -sf -X POST http://localhost:8080/jsonrpc \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"system.listMethods","params":[],"id":3}')
+          echo "listMethods: $resp"
+          echo "$resp" | jq -e '.result | length > 20' || { echo "Too few methods"; exit 1; }
+      - name: Test task creation via API
+        run: |
+          resp=$(curl -sf -X POST http://localhost:8080/api/tasks \
+            -H "Content-Type: application/json" \
+            -d '{"url":"https://example.com/test.bin"}')
+          echo "Create task: $resp"
+      - name: Test task list via API
+        run: |
+          resp=$(curl -sf http://localhost:8080/api/tasks)
+          echo "List tasks: $resp"
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -n "$AFD_PID" ]; then
+            kill $AFD_PID || true
+            wait $AFD_PID 2>/dev/null || true
+          fi
