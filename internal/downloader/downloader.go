@@ -330,6 +330,16 @@ func (d *Downloader) LoadProgress(ctx context.Context) error {
 		return fmt.Errorf("load control file: %w", err)
 	}
 
+	// URL 校验：控制文件记录的 URL 与当前 URL 不一致时丢弃旧进度，
+	// 防止同文件名不同 URL 错误续传导致文件损坏。
+	if cf.URL != "" && d.url != "" && cf.URL != d.url {
+		d.logger.Warnw("control file URL mismatch, discarding old progress",
+			"control_url", cf.URL,
+			"current_url", d.url,
+		)
+		return nil
+	}
+
 	d.cfMu.Lock()
 	d.controlFile = cf
 	d.lastModified = cf.LastModified
@@ -363,6 +373,7 @@ func (d *Downloader) SaveProgress() error {
 	// CompletedLength 用 totalDownloaded（实际写入字节数），pieceBitfields 用于精确续传
 	d.controlFile.CompletedLength = atomic.LoadInt64(&d.totalDownloaded)
 	d.controlFile.TotalLength = atomic.LoadInt64(&d.fileSize)
+	d.controlFile.URL = d.url
 	d.controlFile.UpdatedAt = time.Now()
 	// 持久化条件下载所需的 Last-Modified / ETag
 	if d.conditionalGet {

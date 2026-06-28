@@ -26,6 +26,7 @@ type ControlFile struct {
 	Status          string               `json:"status"`
 	LastModified    string               `json:"lastModified,omitempty"`
 	ETag            string               `json:"etag,omitempty"`
+	URL             string               `json:"url,omitempty"`
 }
 
 // PieceBitfieldEntry 保存单个 Piece 的 Block 级完成位图
