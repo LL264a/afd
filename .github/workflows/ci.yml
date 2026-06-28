@@ -44,7 +44,17 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
       - name: Run tests
-        run: go test ./... -count=1 -timeout 120s -v
+        run: |
+          set -o pipefail
+          go test ./... -count=1 -timeout 120s -v 2>&1 | tee /tmp/test-output.txt
+      - name: Report failures
+        if: failure()
+        run: |
+          grep -E "^(--- FAIL|FAIL\s|panic:|--- SKIP)" /tmp/test-output.txt | head -30 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          echo "=== Last 50 lines of test output ==="
+          tail -50 /tmp/test-output.txt
 
   integration:
     name: Integration Tests
@@ -167,25 +177,32 @@ jobs:
       - name: Start serve mode
         run: |
           mkdir -p /tmp/afd-data
-          AFD_NODE_DATA_DIR=/tmp/afd-data ./afd serve -c config.yaml 2>&1 | tee /tmp/afd-serve.log &
+          # Redirect to file (not tee) so $! is the afd PID, not tee's
+          AFD_NODE_DATA_DIR=/tmp/afd-data ./afd serve -c config.yaml > /tmp/afd-serve.log 2>&1 &
           AFD_PID=$!
           echo "AFD_PID=$AFD_PID" >> $GITHUB_ENV
-          # Wait for server to be ready
-          for i in $(seq 1 15); do
-            if curl -sf http://localhost:8080/health; then
-              echo "Server is ready"
+          # Wait for server to be ready (up to 20s)
+          ready=false
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
+              ready=true
+              echo "Server is ready (after ${i}s)"
               break
             fi
-            # Check if process is still alive
             if ! kill -0 $AFD_PID 2>/dev/null; then
-              echo "Server process exited unexpectedly"
+              echo "Server process exited unexpectedly after ${i}s"
+              echo "=== Serve log ==="
               cat /tmp/afd-serve.log
               exit 1
             fi
             sleep 1
           done
-          # Final check
-          curl -sf http://localhost:8080/health || { echo "Server not responding after 15s"; cat /tmp/afd-serve.log; exit 1; }
+          if [ "$ready" = "false" ]; then
+            echo "Server not responding after 20s"
+            echo "=== Serve log ==="
+            cat /tmp/afd-serve.log
+            exit 1
+          fi
       - name: Test health endpoint
         run: |
           resp=$(curl -sf http://localhost:8080/health)

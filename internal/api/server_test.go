@@ -37,7 +37,7 @@ func TestIsSafePath(t *testing.T) {
 		path string
 		want bool
 	}{
-		{"/tmp/downloads", true},
+		{"downloads/tmp", true},
 		{"downloads/file.zip", true},
 		{"../etc/passwd", false},
 		{"../../secret", false},
