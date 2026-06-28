@@ -294,13 +294,24 @@ func doDownload(url, outputPath string) error {
 
 	startTime := time.Now()
 
-	ticker := time.NewTicker(2 * time.Second)
+	// TTY 下显示动态进度条（200ms 刷新），非 TTY 回退到结构化日志（2s 间隔）。
+	tty := isTerminal(os.Stderr) && !quiet
+	interval := 2 * time.Second
+	var bar *progressBar
+	if tty {
+		interval = 200 * time.Millisecond
+		bar = &progressBar{w: os.Stderr, width: 30}
+	}
+	ticker := time.NewTicker(interval)
 	go func() {
 		defer ticker.Stop()
 		var lastLoggedPct int
 		for {
 			select {
 			case <-ctx.Done():
+				if bar != nil {
+					fmt.Fprint(os.Stderr, "\n")
+				}
 				return
 			case <-ticker.C:
 				progress := d.Progress()
@@ -309,8 +320,9 @@ func doDownload(url, outputPath string) error {
 				fileSize := d.FileSize()
 				pct := int(progress)
 
-				// 每 10% 或速度变化时输出一次
-				if pct != lastLoggedPct || speed > 0 {
+				if bar != nil {
+					bar.render(pct, downloaded, fileSize, speed)
+				} else if pct != lastLoggedPct || speed > 0 {
 					lastLoggedPct = pct
 					if fileSize > 0 {
 						log.Infow("progress", "pct", pct, "downloaded", formatBytes(downloaded),
@@ -439,6 +451,59 @@ func formatBytes(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// isTerminal 检测文件描述符是否连接到终端（非 TTY 环境如 journald 回退到日志输出）。
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+// progressBar 在 TTY 下渲染动态单行进度条。
+// 格式: [========>           ] 45% | 5.2 MiB/s | 1.2 GiB / 2.4 GiB | ETA 3m45s
+type progressBar struct {
+	w     *os.File
+	width int
+}
+
+func (p *progressBar) render(pct int, downloaded, fileSize, speed int64) {
+	if pct < 0 {
+		pct = 0
+	} else if pct > 100 {
+		pct = 100
+	}
+	filled := p.width * pct / 100
+	bar := strings.Repeat("=", filled)
+	if filled < p.width {
+		bar += ">"
+		bar += strings.Repeat(" ", p.width-filled-1)
+	} else {
+		bar = strings.Repeat("=", p.width)
+	}
+
+	total := formatBytes(fileSize)
+	if fileSize <= 0 {
+		total = "?"
+	}
+
+	var eta string
+	if speed > 0 && fileSize > 0 && downloaded < fileSize {
+		remaining := fileSize - downloaded
+		secs := remaining / speed
+		if secs < 60 {
+			eta = fmt.Sprintf("%ds", secs)
+		} else {
+			eta = fmt.Sprintf("%dm%ds", secs/60, secs%60)
+		}
+	} else {
+		eta = "--"
+	}
+
+	fmt.Fprintf(p.w, "\r[%s] %3d%% | %8s/s | %s / %s | ETA %s   ",
+		bar, pct, formatBytes(speed), formatBytes(downloaded), total, eta)
 }
 
 // --- RPC client and command implementations ---
