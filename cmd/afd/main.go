@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -145,6 +147,18 @@ var (
 	daemon              bool
 	streamPieceSelector string
 	uriSelector         string
+
+	// wget/curl 兼容 flag
+	userAgent            string
+	headers              []string
+	referer              string
+	httpUser             string
+	httpPassword         string
+	spider               bool
+	serverResponse       bool
+	noContentDisposition bool
+	remoteTime           bool
+	maxTime              int
 )
 
 // errInterrupted 表示用户通过 SIGINT/SIGTERM 中断下载。
@@ -157,10 +171,18 @@ var downloadCmd = &cobra.Command{
 	Long: `直接下载文件，无需启动服务。
 
 示例:
-  afd dl http://example.com/file.zip
-  afd dl -o /tmp/file.zip http://example.com/file.zip
-  afd dl -s 4 http://example.com/file.zip
-  afd dl -i urls.txt                    # 批量下载`,
+  afd dl http://example.com/file.zip           # 直接下载
+  afd dl -o /tmp/file.zip http://example.com/file.zip  # 指定输出
+  afd dl -s 4 http://example.com/file.zip      # 4线程
+  afd dl -i urls.txt                           # 批量下载
+  afd dl -U "MyApp/1.0" URL                    # 自定义 User-Agent
+  afd dl -H "Authorization: Bearer token" URL  # 自定义请求头 (可多次)
+  afd dl -e https://ref.example.com URL        # 设置 Referer
+  afd dl --http-user user --http-password pass URL  # HTTP 认证
+  afd dl --spider URL                          # 只检查不下载
+  afd dl -S URL                                # 打印服务器响应头
+  afd dl -m 60 URL                             # 60秒总超时
+  afd dl --remote-time URL                     # 用服务器时间设置文件时间`,
 	Aliases: []string{"download"},
 	Args:    cobra.RangeArgs(0, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -280,6 +302,37 @@ func doDownload(url, outputPath string, explicit bool) error {
 		cfg.UriSelector = uriSelector
 	}
 
+	// wget/curl 兼容选项
+	if userAgent != "" {
+		cfg.UserAgent = userAgent
+	}
+	if referer != "" {
+		cfg.Referer = referer
+	}
+	if httpUser != "" {
+		cfg.HTTPUsername = httpUser
+		cfg.HTTPPassword = httpPassword
+	}
+	if len(headers) > 0 {
+		cfg.CustomHeaders = make(map[string]string, len(headers))
+		for _, h := range headers {
+			// 解析 "Key: Value" 格式（对标 curl -H）
+			idx := strings.Index(h, ":")
+			if idx > 0 {
+				key := strings.TrimSpace(h[:idx])
+				val := strings.TrimSpace(h[idx+1:])
+				if key != "" {
+					cfg.CustomHeaders[key] = val
+				}
+			} else {
+				return fmt.Errorf("invalid header format (expected 'Key: Value'): %s", h)
+			}
+		}
+	}
+	if remoteTime {
+		cfg.RemoteTime = true
+	}
+
 	cfg.Quiet = quiet
 
 	logLevel := "info"
@@ -291,8 +344,20 @@ func doDownload(url, outputPath string, explicit bool) error {
 
 	log := logger.Log.Named("download")
 
+	// --spider 模式：只检查不下载（对标 wget --spider）
+	if spider {
+		return doSpider(url, cfg, serverResponse)
+	}
+
 	log.Infow("starting download", "url", url, "output", outputPath,
 		"speed_limit", speedLimit, "parallel", parallel, "adaptive", adaptive, "insecure", insecure)
+
+	// --server-response: 下载前打印响应头（对标 wget -S，调试用途）
+	if serverResponse {
+		if err := probeAndPrintHeaders(url, cfg); err != nil {
+			log.Warnw("server-response probe failed", "error", err)
+		}
+	}
 
 	d, err := downloader.NewDownloaderFromURL(url, outputPath, cfg, log)
 	if err != nil {
@@ -303,6 +368,10 @@ func doDownload(url, outputPath string, explicit bool) error {
 	d.SetControlFilePath(outputPath + ".ctl")
 
 	ctx, cancel := context.WithCancel(context.Background())
+	// --max-time: 用 context 超时实现总时长限制（不用 http.Client.Timeout，避免杀死大文件）
+	if maxTime > 0 {
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(maxTime)*time.Second)
+	}
 	defer cancel()
 
 	sigCh := make(chan os.Signal, 1)
@@ -373,8 +442,8 @@ func doDownload(url, outputPath string, explicit bool) error {
 	signal.Stop(sigCh)
 	cancel()
 
-	// Content-Disposition 重命名：若 -o 未显式指定，用服务器建议的文件名
-	if !explicit {
+	// Content-Disposition 重命名：若 -o 未显式指定且未禁用，用服务器建议的文件名
+	if !explicit && !noContentDisposition {
 		if cd := d.ContentDisposition(); cd != "" {
 			if name := downloader.ParseContentDispositionFilename(cd); name != "" {
 				name = sanitizeFilename(name)
@@ -548,6 +617,108 @@ func sanitizeFilename(name string) string {
 		"<", "_", ">", "_", "|", "_",
 	)
 	return repl.Replace(name)
+}
+
+// applyCfgHeaders 将 cfg 中的自定义头、Referer、User-Agent 和 HTTP 认证应用到请求。
+// 用于 --spider/--server-response 的独立探测请求（不依赖 downloader 内部状态）。
+func applyCfgHeaders(req *http.Request, cfg *config.DownloadConfig) {
+	if cfg.UserAgent != "" {
+		req.Header.Set("User-Agent", cfg.UserAgent)
+	} else {
+		req.Header.Set("User-Agent", "AFD/0.3")
+	}
+	if cfg.Referer != "" {
+		req.Header.Set("Referer", cfg.Referer)
+	}
+	for k, v := range cfg.CustomHeaders {
+		req.Header.Set(k, v)
+	}
+	if cfg.HTTPUsername != "" {
+		req.SetBasicAuth(cfg.HTTPUsername, cfg.HTTPPassword)
+	}
+}
+
+// buildProbeClient 构建用于 --spider/--server-response 的轻量 HTTP 客户端。
+// 不设置 http.Client.Timeout（避免限制大文件），仅用 Transport 级超时。
+func buildProbeClient(cfg *config.DownloadConfig) *http.Client {
+	transport := &http.Transport{
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2: true,
+	}
+	if cfg.Insecure {
+		transport.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true,
+			MinVersion:         tls.VersionTLS12,
+		}
+	}
+	return &http.Client{Transport: transport}
+}
+
+// doSpider 执行 --spider 模式：发 HEAD 请求，打印状态和元数据，不下载文件。
+func doSpider(rawURL string, cfg *config.DownloadConfig, printHeaders bool) error {
+	client := buildProbeClient(cfg)
+	req, err := http.NewRequest("HEAD", rawURL, nil)
+	if err != nil {
+		return fmt.Errorf("创建请求失败: %w", err)
+	}
+	applyCfgHeaders(req, cfg)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	fmt.Fprintf(os.Stderr, "HTTP %s\n", resp.Status)
+	if printHeaders {
+		resp.Header.Write(os.Stderr)
+		fmt.Fprintln(os.Stderr)
+	}
+
+	size := resp.ContentLength
+	ct := resp.Header.Get("Content-Type")
+	fmt.Fprintf(os.Stderr, "URL: %s\n", rawURL)
+	if size >= 0 {
+		fmt.Fprintf(os.Stderr, "Size: %d (%s)\n", size, formatBytes(size))
+	} else {
+		fmt.Fprintln(os.Stderr, "Size: unknown")
+	}
+	if ct != "" {
+		fmt.Fprintf(os.Stderr, "Content-Type: %s\n", ct)
+	}
+	fmt.Fprintf(os.Stderr, "Supports Range: %v\n", resp.Header.Get("Accept-Ranges") == "bytes")
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("HTTP %s", resp.Status)
+	}
+	return nil
+}
+
+// probeAndPrintHeaders 为 --server-response 打印响应头（非 spider 模式）。
+// 会多发一次 HEAD 请求，调试场景可接受（wget -S 也打印每次请求的响应头）。
+func probeAndPrintHeaders(rawURL string, cfg *config.DownloadConfig) error {
+	client := buildProbeClient(cfg)
+	req, err := http.NewRequest("HEAD", rawURL, nil)
+	if err != nil {
+		return err
+	}
+	applyCfgHeaders(req, cfg)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	fmt.Fprintf(os.Stderr, "HTTP %s\n", resp.Status)
+	resp.Header.Write(os.Stderr)
+	fmt.Fprintln(os.Stderr)
+	return nil
 }
 
 // isTerminal 检测文件描述符是否连接到终端（非 TTY 环境如 journald 回退到日志输出）。
@@ -1024,6 +1195,18 @@ func init() {
 	downloadCmd.Flags().BoolVarP(&noNetrc, "no-netrc", "n", false, "禁用 netrc 凭证读取")
 	downloadCmd.Flags().StringVar(&streamPieceSelector, "stream-piece-selector", "", "分片选择策略: inorder|geom|random (默认 inorder)")
 	downloadCmd.Flags().StringVar(&uriSelector, "uri-selector", "", "URI 选择器: inorder|feedback|adaptive (默认 feedback)")
+
+	// wget/curl 兼容 flag
+	downloadCmd.Flags().StringVarP(&userAgent, "user-agent", "U", "", "自定义 User-Agent (对标 wget -U / curl -A)")
+	downloadCmd.Flags().StringArrayVarP(&headers, "header", "H", nil, "自定义请求头 (格式: 'Key: Value'，可多次使用，对标 curl -H)")
+	downloadCmd.Flags().StringVarP(&referer, "referer", "e", "", "设置 Referer 头 (对标 curl -e / wget --referer)")
+	downloadCmd.Flags().StringVar(&httpUser, "http-user", "", "HTTP 认证用户名 (对标 wget --http-user / curl -u)")
+	downloadCmd.Flags().StringVar(&httpPassword, "http-password", "", "HTTP 认证密码 (对标 wget --http-password)")
+	downloadCmd.Flags().BoolVar(&spider, "spider", false, "只检查不下载 (对标 wget --spider)")
+	downloadCmd.Flags().BoolVarP(&serverResponse, "server-response", "S", false, "打印服务器响应头 (对标 wget -S)")
+	downloadCmd.Flags().BoolVar(&noContentDisposition, "no-content-disposition", false, "禁用 Content-Disposition 自动重命名")
+	downloadCmd.Flags().BoolVar(&remoteTime, "remote-time", false, "使用服务器时间设置本地文件时间 (对标 wget --remote-time)")
+	downloadCmd.Flags().IntVarP(&maxTime, "max-time", "m", 0, "最大下载时长 (秒)，超时取消 (对标 curl -m)")
 
 	serveCmd.Flags().BoolVarP(&daemon, "daemon", "D", false, "以守护进程方式运行 (仅 Unix)")
 

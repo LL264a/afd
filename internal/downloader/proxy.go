@@ -417,9 +417,9 @@ func (d *Downloader) GetProxy() *config.ProxyConfig {
 
 func (d *Downloader) createClientWithProxy(proxyCfg *config.ProxyConfig) *http.Client {
 	if proxyCfg == nil || !proxyCfg.IsValid() {
-		return &http.Client{
-			Timeout: d.cfg.Timeout,
-		}
+		// 不设置 http.Client.Timeout：它会限制整个下载时长，大文件会被杀死。
+		// 仅依赖 Transport 级的连接/读超时（见 NewDownloader）。
+		return &http.Client{}
 	}
 
 	client, err := CreateProxyClient(proxyCfg, d.cfg.Timeout, proxyCfg.UseDigest, proxyCfg.ExcludeList)
@@ -430,9 +430,7 @@ func (d *Downloader) createClientWithProxy(proxyCfg *config.ProxyConfig) *http.C
 			"proxy_host", proxyCfg.Host,
 			"proxy_port", proxyCfg.Port,
 		)
-		return &http.Client{
-			Timeout: d.cfg.Timeout,
-		}
+		return &http.Client{}
 	}
 
 	return client
